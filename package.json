@@ -24,6 +24,6 @@
   },
   "devDependencies": {
     "pdfjs-dist": "6.4.299",
-    "puppeteer-core": "24.10.0"
+    "puppeteer-core": "25.16.0"
   }
 }
