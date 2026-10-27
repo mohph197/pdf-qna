@@ -15,11 +15,14 @@ function blockquote(text) {
     .join("\n");
 }
 
+// encodeURIComponent leaves parentheses alone, but they end a Markdown link.
+const percentEncode = (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`;
+
 /**
  * @param {object} p
  * @param {string} p.name  file name of the PDF
  * @param {{ id, text }[]} p.questions
- * @param {object} p.results  id -> { answerable, answer, quotes: [{ text, page }], model }
+ * @param {object} p.results  id -> { answerable, answer, quotes: [{ text, page }], webSources: [{ url, title, quote }], model }
  * @param {object} p.matches  id -> [{ status, score, page, segments }] per quote
  * @param {Date} [p.date]
  */
@@ -47,6 +50,13 @@ export function answersToMarkdown({ name, questions, results, matches, date = ne
       const note = m ? (STATUS_NOTE[found ? m.status : "none"]?.(m) ?? "") : "";
       out.push("", blockquote(`“${quote.text}”`), ">", `> — ${page ? `p. ${page}` : "page unknown"}${note}`);
     });
+    if (res.webSources?.length) {
+      out.push("", "Web sources:", "");
+      for (const src of res.webSources) {
+        out.push(`- [${src.title.replace(/[[\]]/g, "\\$&")}](${src.url.replace(/[()\s]/g, percentEncode)})`);
+        if (src.quote) out.push(`  > “${src.quote.replace(/\s*\n\s*/g, " ")}”`);
+      }
+    }
   });
   return out.join("\n") + "\n";
 }

@@ -12,8 +12,8 @@ export const COLORS = ["#ffd400", "#4dabf7", "#69db7c", "#ff8787", "#b197fc", "#
 
 const state = {
   doc: null, // { hash, name, bytes, pages, pageTexts, index }
-  questions: [], // [{ id, text, color }]
-  results: {}, // id -> { answerable, answer, quotes: [{ text, page }], model }
+  questions: [], // [{ id, text, color, web }]
+  results: {}, // id -> { answerable, answer, quotes: [{ text, page }], webSources: [{ url, title, quote }], model }
   matches: {}, // id -> [match per quote]
   pending: new Set(), // ids currently being asked
   status: "",
@@ -59,6 +59,7 @@ function buildSidebar() {
       }
     },
   });
+  ui.web = h("input", { type: "checkbox", class: "qa-check" });
   ui.add = h("button", { class: "qa-btn", type: "button", onclick: addQuestionsFromInput, title: "⌘/Ctrl+Enter" }, "Add");
   ui.ask = h("button", { class: "qa-btn qa-primary", type: "button", onclick: () => ask(false) }, "Find answers");
   ui.list = h("div", { class: "qa-list" });
@@ -87,7 +88,22 @@ function buildSidebar() {
     ),
     ui.status,
     ui.error,
-    h("div", { class: "qa-compose" }, ui.input, h("div", { class: "qa-row" }, ui.add, ui.ask)),
+    h(
+      "div",
+      { class: "qa-compose" },
+      ui.input,
+      h(
+        "div",
+        { class: "qa-options" },
+        h(
+          "label",
+          { title: "Claude may also search the web for these questions ($10 per 1,000 searches on your API account)" },
+          ui.web,
+          "Search the web",
+        ),
+      ),
+      h("div", { class: "qa-row" }, ui.add, ui.ask),
+    ),
     ui.list,
     h("footer", { class: "qa-footer" }, ui.export, ui.markdown, ui.reask, ui.clear),
   );
@@ -208,6 +224,27 @@ function render() {
             ),
           );
         }
+        if (res.webSources?.length) {
+          body.push(
+            h(
+              "ol",
+              { class: "qa-quotes qa-web" },
+              res.webSources.map((src) =>
+                h(
+                  "li",
+                  {},
+                  h(
+                    "a",
+                    { class: "qa-quote qa-web-source", href: src.url, target: "_blank", rel: "noreferrer", title: src.url },
+                    h("span", { class: "qa-page" }, hostname(src.url)),
+                    h("span", { class: "qa-web-title" }, src.title),
+                    src.quote ? h("span", { class: "qa-quote-text" }, `“${src.quote}”`) : null,
+                  ),
+                ),
+              ),
+            ),
+          );
+        }
       }
       return h(
         "section",
@@ -216,7 +253,12 @@ function render() {
           "div",
           { class: "qa-q" },
           h("span", { class: "qa-swatch" }),
-          h("span", { class: "qa-q-text" }, `${n + 1}. ${q.text}`),
+          h(
+            "span",
+            { class: "qa-q-text" },
+            `${n + 1}. ${q.text}`,
+            q.web ? h("span", { class: "qa-tag qa-tag-q", title: "Claude may search the web for this question" }, "web") : null,
+          ),
           h(
             "button",
             {
@@ -240,14 +282,22 @@ function render() {
   }
 }
 
+function hostname(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "web";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Questions
 
 let nextId = 1;
-function newQuestion(text) {
+function newQuestion(text, { web = false } = {}) {
   const used = new Set(state.questions.map((q) => q.color));
   const color = COLORS.find((c) => !used.has(c)) ?? COLORS[state.questions.length % COLORS.length];
-  return { id: `q${Date.now().toString(36)}${nextId++}`, text, color };
+  return { id: `q${Date.now().toString(36)}${nextId++}`, text, color, web };
 }
 
 function addQuestionsFromInput() {
@@ -256,7 +306,7 @@ function addQuestionsFromInput() {
     .map((l) => l.replace(/^\s*(?:\d+[.)]|[-*•])\s*/, "").trim())
     .filter(Boolean);
   if (!lines.length) return;
-  for (const line of lines) state.questions.push(newQuestion(line));
+  for (const line of lines) state.questions.push(newQuestion(line, { web: ui.web.checked }));
   ui.input.value = "";
   save();
   render();
@@ -458,7 +508,8 @@ function ask(all) {
       });
       const u = msg.usage ?? {};
       const cached = u.cache_read_input_tokens ? ` (${Math.round(u.cache_read_input_tokens / 1000)}k cached)` : "";
-      setStatus(`Answered by ${msg.model}${cached}`);
+      const searches = msg.webSearches ? ` · ${msg.webSearches} web search${msg.webSearches === 1 ? "" : "es"}` : "";
+      setStatus(`Answered by ${msg.model}${cached}${searches}`);
       save();
       refreshHighlights();
       done();
@@ -473,7 +524,11 @@ function ask(all) {
       done();
     }
   });
-  port.postMessage({ type: "ask", pageTexts: state.doc.pageTexts, questions: targets.map((q) => q.text) });
+  port.postMessage({
+    type: "ask",
+    pageTexts: state.doc.pageTexts,
+    questions: targets.map((q) => ({ text: q.text, web: !!q.web })),
+  });
 }
 
 // ---------------------------------------------------------------------------

@@ -22,6 +22,8 @@ When you press **Find answers** (or **Re-ask all**), the extension sends this da
 - the questions you typed,
 - your API key, which authenticates the request.
 
+If you tick **Search the web** for a question, Claude may also search the web for it. The searches are run by Anthropic as part of the same API request, so the extension itself still contacts only `api.anthropic.com`. The search queries Claude writes, which can draw on your question and the paper, are handled under Anthropic's terms. Links to the web pages Claude cites are shown in the sidebar; the extension does not open them unless you click one.
+
 Anthropic processes this data under its own terms and privacy policy, which apply to your API account: <https://www.anthropic.com/legal/privacy>. Paper Q&A is an independent project and is not affiliated with or endorsed by Anthropic.
 
 The extension also downloads the PDF you choose to open, from the web address it was opened from. This is the same request your browser would make to display it.
