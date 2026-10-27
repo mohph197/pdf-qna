@@ -66,6 +66,13 @@ async function errorFromResponse(res, model) {
       if (res.status === 400 && /prompt is too long|too many tokens|context window/i.test(message)) {
         return new ClaudeError("too_long", `This paper is too long for ${model}'s context window. ${message}`);
       }
+      if (res.status === 400 && /web.?search/i.test(message)) {
+        return new ClaudeError(
+          "web_disabled",
+          "Web search isn't available to your API key. An admin can enable it in the Claude Console under Settings > Capabilities; " +
+            `otherwise ask without "Search the web". (${message})`,
+        );
+      }
       if (res.status === 400 && /output_config|json_schema|format/i.test(message)) {
         return new ClaudeError("schema_unsupported", message);
       }
@@ -77,9 +84,14 @@ async function errorFromResponse(res, model) {
   }
 }
 
+// Blocks that mark a tool round trip; the reply's text is what follows the last one.
+const TEXT_LIKE = new Set(["text", "thinking", "redacted_thinking"]);
+
 /**
- * One streamed request. Returns { text, stopReason, model, usage }.
- * onDelta(totalChars) is called as text arrives.
+ * One streamed request. Returns { text, stopReason, model, usage, content,
+ * searchResults }: content is the reconstructed list of content blocks (sent
+ * back to resume after pause_turn), searchResults maps each web search result
+ * or citation url to its title. onDelta(totalChars) is called as text arrives.
  */
 async function streamMessage({ apiKey, body, betas, signal, onDelta }) {
   let res;
@@ -101,9 +113,14 @@ async function streamMessage({ apiKey, body, betas, signal, onDelta }) {
   let buffer = "";
   let text = "";
   let blockType = null;
+  let block = null;
+  let partialJson = "";
   let stopReason = null;
   let model = body.model;
   const usage = {};
+  const content = [];
+  const searchResults = new Map();
+  const addSource = (r) => r?.url && !searchResults.get(r.url) && searchResults.set(r.url, r.title ?? "");
 
   const handle = (evt) => {
     switch (evt.type) {
@@ -117,14 +134,44 @@ async function streamMessage({ apiKey, body, betas, signal, onDelta }) {
         // whatever the refusing model streamed before it must be discarded.
         if (blockType === "fallback") {
           text = "";
+          content.length = 0;
+          block = null;
           model = evt.content_block?.model ?? model;
+          break;
+        }
+        if (!TEXT_LIKE.has(blockType)) text = "";
+        block = structuredClone(evt.content_block ?? {});
+        partialJson = "";
+        content.push(block);
+        if (blockType === "web_search_tool_result" && Array.isArray(block.content)) block.content.forEach(addSource);
+        break;
+      case "content_block_delta": {
+        const d = evt.delta ?? {};
+        if (d.type === "text_delta" && blockType === "text") {
+          text += d.text;
+          block.text = (block.text ?? "") + d.text;
+          onDelta?.(text.length);
+        } else if (d.type === "thinking_delta" && block) {
+          block.thinking = (block.thinking ?? "") + d.thinking;
+        } else if (d.type === "signature_delta" && block) {
+          block.signature = d.signature;
+        } else if (d.type === "input_json_delta") {
+          partialJson += d.partial_json;
+        } else if (d.type === "citations_delta" && block) {
+          (block.citations ??= []).push(d.citation);
+          addSource(d.citation);
         }
         break;
-      case "content_block_delta":
-        if (evt.delta?.type === "text_delta" && blockType === "text") {
-          text += evt.delta.text;
-          onDelta?.(text.length);
+      }
+      case "content_block_stop":
+        if (block && partialJson) {
+          try {
+            block.input = JSON.parse(partialJson);
+          } catch {
+            /* keep the input from content_block_start */
+          }
         }
+        partialJson = "";
         break;
       case "message_delta":
         stopReason = evt.delta?.stop_reason ?? stopReason;
@@ -165,7 +212,7 @@ async function streamMessage({ apiKey, body, betas, signal, onDelta }) {
     if (e.name === "AbortError") throw new ClaudeError("aborted", "Request cancelled.");
     throw new ClaudeError("network", `The connection to the Anthropic API dropped: ${e.message}`, { retryable: true });
   }
-  return { text, stopReason, model, usage };
+  return { text, stopReason, model, usage, content, searchResults };
 }
 
 const sleep = (ms, signal) =>
@@ -196,8 +243,9 @@ async function streamWithRetry(args, onStatus) {
  * Ask questions about a paper.
  * @param {object} p
  * @param {string[]} p.pageTexts  text of every page, in order
- * @param {string[]} p.questions
- * @returns {Promise<{answers, model, usage}>}
+ * @param {{ text: string, web?: boolean, freeform?: boolean }[]} p.questions
+ *   web: may use web search; freeform: answer in any format, quotes optional
+ * @returns {Promise<{answers, model, usage, webSearches}>}
  */
 export async function askPaper({ apiKey, model, effort, pageTexts, questions, signal, onStatus, onDelta }) {
   if (!apiKey) {
@@ -215,27 +263,45 @@ export async function askPaper({ apiKey, model, effort, pageTexts, questions, si
   }
 
   const betas = info.fallbacks ? [FALLBACK_BETA] : [];
+  const webAllowed = questions.map((q) => !!q.web);
+  const freeform = questions.map((q) => !!q.freeform);
+  const tools = webAllowed.some(Boolean) ? [{ type: info.webSearch, name: "web_search", max_uses: 5 }] : [];
   let useSchema = true;
   const base = () => ({
     model,
-    max_tokens: 16000,
+    // Free-form answers (tables, extractions) can be much longer than short ones.
+    max_tokens: freeform.some(Boolean) ? 32000 : 16000,
     system: SYSTEM_PROMPT,
     output_config: {
       effort,
       ...(useSchema ? { format: { type: "json_schema", schema: ANSWER_SCHEMA } } : {}),
     },
+    ...(tools.length ? { tools } : {}),
     // Re-run on a fallback model server-side if a safety classifier declines.
     ...(info.fallbacks ? { fallbacks: "default" } : {}),
   });
 
   const messages = [{ role: "user", content: buildUserContent(pageTexts, questions) }];
   let usageTotal = {};
+  let webSearches = 0;
+  const searchResults = new Map();
 
   for (let attempt = 0; attempt < 2; attempt++) {
     onStatus?.(attempt === 0 ? `Asking ${model}…` : "Response was malformed; asking again…");
     let reply;
     try {
-      reply = await streamWithRetry({ apiKey, body: { ...base(), messages }, betas, signal, onDelta }, onStatus);
+      const send = (msgs) => streamWithRetry({ apiKey, body: { ...base(), messages: msgs }, betas, signal, onDelta }, onStatus);
+      reply = await send(messages);
+      // A long web search turn can pause; sending the partial turn back resumes it.
+      let turn = [];
+      for (let resumes = 0; ; resumes++) {
+        webSearches += reply.usage?.server_tool_use?.web_search_requests ?? 0;
+        for (const [url, title] of reply.searchResults) if (!searchResults.get(url)) searchResults.set(url, title);
+        if (reply.stopReason !== "pause_turn" || resumes >= 3) break;
+        turn = [...turn, ...reply.content];
+        onStatus?.("Searching the web…");
+        reply = await send([...messages, { role: "assistant", content: turn }]);
+      }
     } catch (e) {
       if (e.code === "schema_unsupported" && useSchema) {
         // Older or proxied models may reject structured outputs; the system
@@ -252,8 +318,8 @@ export async function askPaper({ apiKey, model, effort, pageTexts, questions, si
       throw new ClaudeError("refusal", "Claude declined to answer these questions about this document.");
     }
     try {
-      const answers = parseAnswers(reply.text, questions.length, pageTexts.length);
-      return { answers, model: reply.model, usage: usageTotal };
+      const answers = parseAnswers(reply.text, questions.length, pageTexts.length, { webAllowed, freeform, searchResults });
+      return { answers, model: reply.model, usage: usageTotal, webSearches };
     } catch (e) {
       if (attempt === 1) {
         throw new ClaudeError(

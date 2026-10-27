@@ -85,6 +85,23 @@ html.qa-open #outerContainer {
   outline: 2px solid var(--qa-accent);
   outline-offset: -1px;
 }
+.qa-options {
+  display: flex;
+  gap: 12px;
+  margin-top: 6px;
+  color: var(--qa-muted);
+  font-size: 12px;
+}
+.qa-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.qa-check {
+  margin: 0;
+  accent-color: var(--qa-accent);
+}
 .qa-row {
   display: flex;
   gap: 8px;
@@ -177,12 +194,23 @@ html.qa-open #outerContainer {
 }
 .qa-q-text {
   flex: 1;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .qa-remove {
   font-size: 12px;
 }
 .qa-answer {
   margin: 6px 0 0 18px;
+}
+.qa-freeform {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.qa-answer-actions {
+  margin: 4px 0 0 18px;
+  font-size: 12px;
+  color: var(--qa-muted);
 }
 .qa-muted {
   color: var(--qa-muted);
@@ -196,6 +224,11 @@ html.qa-open #outerContainer {
   font-size: 11px;
   background: var(--qa-border);
   color: var(--qa-muted);
+}
+.qa-tag-q {
+  margin: 0 0 0 6px;
+  font-weight: 400;
+  vertical-align: 1px;
 }
 .qa-unanswerable {
   color: var(--qa-muted);
@@ -229,6 +262,17 @@ html.qa-open #outerContainer {
   cursor: default;
   background: none;
   opacity: 0.75;
+}
+a.qa-web-source {
+  text-decoration: none;
+  background: none;
+}
+.qa-web-source:hover {
+  border-color: var(--qa-color);
+}
+.qa-web-title {
+  font-weight: 600;
+  margin-right: 6px;
 }
 .qa-page {
   font-weight: 600;

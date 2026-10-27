@@ -4,6 +4,7 @@
 import { buildIndex, matchQuote, pageText } from "../../lib/matcher.js";
 import { getSettings, modelInfo } from "../../shared/models.js";
 import { exportAnnotated } from "./export.js";
+import { answersToMarkdown } from "./markdown.js";
 
 const app = window.PDFViewerApplication;
 
@@ -11,8 +12,8 @@ export const COLORS = ["#ffd400", "#4dabf7", "#69db7c", "#ff8787", "#b197fc", "#
 
 const state = {
   doc: null, // { hash, name, bytes, pages, pageTexts, index }
-  questions: [], // [{ id, text, color }]
-  results: {}, // id -> { answerable, answer, quotes: [{ text, page }], model }
+  questions: [], // [{ id, text, color, web, freeform }]
+  results: {}, // id -> { answerable, answer, quotes: [{ text, page }], webSources: [{ url, title, quote }], model }
   matches: {}, // id -> [match per quote]
   pending: new Set(), // ids currently being asked
   status: "",
@@ -58,10 +59,17 @@ function buildSidebar() {
       }
     },
   });
+  ui.web = h("input", { type: "checkbox", class: "qa-check" });
+  ui.freeform = h("input", { type: "checkbox", class: "qa-check" });
   ui.add = h("button", { class: "qa-btn", type: "button", onclick: addQuestionsFromInput, title: "⌘/Ctrl+Enter" }, "Add");
   ui.ask = h("button", { class: "qa-btn qa-primary", type: "button", onclick: () => ask(false) }, "Find answers");
   ui.list = h("div", { class: "qa-list" });
   ui.export = h("button", { class: "qa-btn", type: "button", onclick: doExport }, "Export annotated PDF");
+  ui.markdown = h(
+    "button",
+    { class: "qa-btn", type: "button", onclick: doExportMarkdown, title: "Questions, answers and quotes with page numbers" },
+    "Export Markdown",
+  );
   ui.reask = h("button", { class: "qa-btn", type: "button", onclick: () => ask(true) }, "Re-ask all");
   ui.clear = h("button", { class: "qa-btn qa-danger", type: "button", onclick: clearAll }, "Clear");
 
@@ -81,9 +89,33 @@ function buildSidebar() {
     ),
     ui.status,
     ui.error,
-    h("div", { class: "qa-compose" }, ui.input, h("div", { class: "qa-row" }, ui.add, ui.ask)),
+    h(
+      "div",
+      { class: "qa-compose" },
+      ui.input,
+      h(
+        "div",
+        { class: "qa-options" },
+        h(
+          "label",
+          { title: "Claude may also search the web for these questions ($10 per 1,000 searches on your API account)" },
+          ui.web,
+          "Search the web",
+        ),
+        h(
+          "label",
+          {
+            title:
+              "Answer in whatever format the request asks for (lists, tables, JSON…); quotes become optional. The whole box is one request.",
+          },
+          ui.freeform,
+          "Free-form answer",
+        ),
+      ),
+      h("div", { class: "qa-row" }, ui.add, ui.ask),
+    ),
     ui.list,
-    h("footer", { class: "qa-footer" }, ui.export, ui.reask, ui.clear),
+    h("footer", { class: "qa-footer" }, ui.export, ui.markdown, ui.reask, ui.clear),
   );
   ui.reopen = h(
     "button",
@@ -151,6 +183,7 @@ function render() {
   ui.ask.textContent = state.pending.size ? "Asking…" : `Find answers${unanswered.length > 1 ? ` (${unanswered.length})` : ""}`;
   ui.reask.disabled = !hasDoc || state.questions.length === 0 || state.pending.size > 0;
   ui.export.disabled = !hasDoc || Object.keys(state.matches).length === 0;
+  ui.markdown.disabled = !hasDoc || Object.keys(state.results).length === 0;
   ui.clear.disabled = state.questions.length === 0 || state.pending.size > 0;
 
   ui.list.replaceChildren(
@@ -166,11 +199,20 @@ function render() {
         body.push(
           h(
             "div",
-            { class: `qa-answer${res.answerable ? "" : " qa-unanswerable"}` },
+            { class: `qa-answer${res.answerable ? "" : " qa-unanswerable"}${q.freeform ? " qa-freeform" : ""}` },
             res.answerable ? null : h("span", { class: "qa-tag" }, "Not answered in the paper"),
             res.answer,
           ),
         );
+        if (q.freeform && res.answerable) {
+          body.push(
+            h(
+              "div",
+              { class: "qa-answer-actions" },
+              h("button", { class: "qa-link", type: "button", onclick: (e) => copyAnswer(e.currentTarget, res.answer) }, "Copy answer"),
+            ),
+          );
+        }
         if (res.quotes.length) {
           body.push(
             h(
@@ -201,6 +243,27 @@ function render() {
             ),
           );
         }
+        if (res.webSources?.length) {
+          body.push(
+            h(
+              "ol",
+              { class: "qa-quotes qa-web" },
+              res.webSources.map((src) =>
+                h(
+                  "li",
+                  {},
+                  h(
+                    "a",
+                    { class: "qa-quote qa-web-source", href: src.url, target: "_blank", rel: "noreferrer", title: src.url },
+                    h("span", { class: "qa-page" }, hostname(src.url)),
+                    h("span", { class: "qa-web-title" }, src.title),
+                    src.quote ? h("span", { class: "qa-quote-text" }, `“${src.quote}”`) : null,
+                  ),
+                ),
+              ),
+            ),
+          );
+        }
       }
       return h(
         "section",
@@ -209,7 +272,13 @@ function render() {
           "div",
           { class: "qa-q" },
           h("span", { class: "qa-swatch" }),
-          h("span", { class: "qa-q-text" }, `${n + 1}. ${q.text}`),
+          h(
+            "span",
+            { class: "qa-q-text" },
+            `${n + 1}. ${q.text}`,
+            q.web ? h("span", { class: "qa-tag qa-tag-q", title: "Claude may search the web for this question" }, "web") : null,
+            q.freeform ? h("span", { class: "qa-tag qa-tag-q", title: "Free-form answer; quotes are optional" }, "free-form") : null,
+          ),
           h(
             "button",
             {
@@ -233,23 +302,45 @@ function render() {
   }
 }
 
+function hostname(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "web";
+  }
+}
+
+async function copyAnswer(button, text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    button.textContent = "Copied";
+  } catch {
+    button.textContent = "Copy failed";
+  }
+  setTimeout(() => (button.textContent = "Copy answer"), 1500);
+}
+
 // ---------------------------------------------------------------------------
 // Questions
 
 let nextId = 1;
-function newQuestion(text) {
+function newQuestion(text, { web = false, freeform = false } = {}) {
   const used = new Set(state.questions.map((q) => q.color));
   const color = COLORS.find((c) => !used.has(c)) ?? COLORS[state.questions.length % COLORS.length];
-  return { id: `q${Date.now().toString(36)}${nextId++}`, text, color };
+  return { id: `q${Date.now().toString(36)}${nextId++}`, text, color, web, freeform };
 }
 
 function addQuestionsFromInput() {
-  const lines = ui.input.value
-    .split("\n")
-    .map((l) => l.replace(/^\s*(?:\d+[.)]|[-*•])\s*/, "").trim())
-    .filter(Boolean);
+  const freeform = ui.freeform.checked;
+  // A free-form request often spans lines (e.g. a format spec), so it stays whole.
+  const lines = freeform
+    ? [ui.input.value.trim()].filter(Boolean)
+    : ui.input.value
+        .split("\n")
+        .map((l) => l.replace(/^\s*(?:\d+[.)]|[-*•])\s*/, "").trim())
+        .filter(Boolean);
   if (!lines.length) return;
-  for (const line of lines) state.questions.push(newQuestion(line));
+  for (const line of lines) state.questions.push(newQuestion(line, { web: ui.web.checked, freeform }));
   ui.input.value = "";
   save();
   render();
@@ -451,7 +542,8 @@ function ask(all) {
       });
       const u = msg.usage ?? {};
       const cached = u.cache_read_input_tokens ? ` (${Math.round(u.cache_read_input_tokens / 1000)}k cached)` : "";
-      setStatus(`Answered by ${msg.model}${cached}`);
+      const searches = msg.webSearches ? ` · ${msg.webSearches} web search${msg.webSearches === 1 ? "" : "es"}` : "";
+      setStatus(`Answered by ${msg.model}${cached}${searches}`);
       save();
       refreshHighlights();
       done();
@@ -466,7 +558,11 @@ function ask(all) {
       done();
     }
   });
-  port.postMessage({ type: "ask", pageTexts: state.doc.pageTexts, questions: targets.map((q) => q.text) });
+  port.postMessage({
+    type: "ask",
+    pageTexts: state.doc.pageTexts,
+    questions: targets.map((q) => ({ text: q.text, web: !!q.web, freeform: !!q.freeform })),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -626,12 +722,7 @@ async function doExport() {
       });
     });
     const out = await exportAnnotated(state.doc.bytes, state.doc.pages, highlights);
-    const url = URL.createObjectURL(new Blob([out], { type: "application/pdf" }));
-    const a = h("a", { href: url, download: state.doc.name.replace(/\.pdf$/i, "") + "-annotated.pdf" });
-    document.body.append(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    download(new Blob([out], { type: "application/pdf" }), "-annotated.pdf");
     setStatus(before);
   } catch (e) {
     setStatus(before);
@@ -639,6 +730,26 @@ async function doExport() {
   } finally {
     render();
   }
+}
+
+function doExportMarkdown() {
+  if (!state.doc) return;
+  const md = answersToMarkdown({
+    name: state.doc.name,
+    questions: state.questions,
+    results: state.results,
+    matches: state.matches,
+  });
+  download(new Blob([md], { type: "text/markdown;charset=utf-8" }), "-answers.md");
+}
+
+function download(blob, suffix) {
+  const url = URL.createObjectURL(blob);
+  const a = h("a", { href: url, download: state.doc.name.replace(/\.pdf$/i, "") + suffix });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 // ---------------------------------------------------------------------------

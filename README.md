@@ -9,7 +9,10 @@ A Chrome extension (Manifest V3) for asking Claude questions about a research-pa
 - Opens PDFs in a bundled copy of Mozilla's pdf.js viewer (v6.4.299), because Chrome's built-in viewer can't be scripted.
 - A sidebar shows your questions, Claude's short answers and 1–3 quotes per answer. Click a quote to scroll to its highlight and flash it.
 - Quotes are matched to the text layer by a matcher that tolerates hyphenation, ligatures, smart quotes, dashes, line breaks, page breaks and small wording differences. Approximate and low-confidence matches are labeled in the sidebar.
+- Tick **Search the web** before adding a question to let Claude also search the web for it, for example for later work, released code or the current state of a result. Answers then list the web pages they rely on, each with a link and a supporting quote. Only pages that a search actually returned are shown.
+- Tick **Free-form answer** for requests that don't fit a short quoted answer, such as "list every dataset as a Markdown table" or "extract the hyperparameters as JSON". The whole input box becomes one request, Claude answers in the format you ask for, and quotes become optional (it still adds them where they directly support the answer). Free-form answers keep their line breaks and have a **Copy answer** button.
 - **Export annotated PDF** saves a copy with the highlights written in as real PDF Highlight annotations, so they show in Acrobat, Preview, Chrome and other readers.
+- **Export Markdown** saves the questions, answers and quotes, with page numbers and match notes, as a `.md` file for your notes.
 - Results are cached per file (by SHA-256 hash). Reopening a paper restores its questions and highlights without a new API call.
 
 ![Paper Q&A answering questions about the ResNet paper](store/screenshot-2-answers.png)
@@ -47,6 +50,7 @@ A typical 10–15 page paper is around 15–20k tokens, which is a few cents per
 - Open any PDF in Chrome. Paper Q&A detects it by URL or by `Content-Type: application/pdf`, so `arxiv.org/pdf/…` URLs work. It then shows an **Open in Paper Q&A** banner (or a notification if the banner can't be shown) and a "Q&A" badge on the toolbar icon. Clicking the toolbar icon also opens the current PDF.
 - You can also right-click a link and choose **Open PDF in Paper Q&A**.
 - Type one or more questions, one per line, and press **Add** (⌘/Ctrl+Enter). Then press **Find answers**. Only unanswered questions are sent. **Re-ask all** sends them all again.
+- Questions added with **Search the web** ticked are tagged "web". Claude may run up to 5 searches per request for them, billed by Anthropic at $10 per 1,000 searches on top of tokens. Your organization's admin can turn web search off in the Claude Console; the sidebar then explains the error.
 - Quote badges in the sidebar:
   - no badge: exact match.
   - `≈ 93%`: close match (for example, the model changed a word).
@@ -65,6 +69,7 @@ lib/matcher.js                 quote matcher (pure ES module, also runs in Node)
 src/viewer/boot.mjs            runs before pdf.js to take over document loading
 src/viewer/qa.mjs, qa.css      sidebar, highlighting, cache, export trigger
 src/viewer/export.js           writes /Highlight annotations with pdf-lib
+src/viewer/markdown.js         renders questions, answers and quotes as Markdown
 options/                       settings page
 vendor/pdfjs/, vendor/pdf-lib/ pinned upstream builds (pdf.js 6.4.299, pdf-lib 1.17.1)
 scripts/vendor.sh              re-downloads vendor/ and patches viewer.html (one command)
@@ -84,13 +89,14 @@ store/                         store listing text, screenshots and promo images
       "question_index": 1,
       "answerable": true,
       "answer": "Short answer.",
-      "quotes": [{ "text": "Verbatim sentence from the paper…", "page": 4 }]
+      "quotes": [{ "text": "Verbatim sentence from the paper…", "page": 4 }],
+      "web_sources": []
     }
   ]
 }
 ```
 
-When the paper doesn't answer a question, `answerable` is `false`, `answer` says what the paper does or doesn't cover, and `quotes` is empty. The reply is validated; if it is malformed, the extension retries once and shows Claude what was wrong. Errors get clear messages: missing or invalid key, unknown model, rate limits (with automatic retry when the wait is short), API overload, refusals, and PDFs too long for the model's context window (checked before sending as well).
+Questions with **Free-form answer** on are marked `[free-form]`: their `answer` may take any format and length, `quotes` may be empty even when `answerable` is `true`, and the request allows 32k output tokens instead of 16k. When a question has web search on, the request also includes Anthropic's server-side `web_search` tool (`web_search_20260209`, or the basic `web_search_20250305` for models without dynamic filtering) and the question is marked `[web search allowed]`. Claude then fills `web_sources` with `{ url, title, quote }` entries. The service worker rebuilds the streamed content blocks so a paused turn (`pause_turn`) can be resumed, records every search result and citation URL, and drops any web source whose URL no search returned. When the paper doesn't answer a question, `answerable` is `false`, `answer` says what the paper does or doesn't cover, and `quotes` is empty. The reply is validated; if it is malformed, the extension retries once and shows Claude what was wrong. Errors get clear messages: missing or invalid key, unknown model, rate limits (with automatic retry when the wait is short), API overload, refusals, and PDFs too long for the model's context window (checked before sending as well).
 
 **Matcher.** Both the page text and each quote are reduced to a key: NFKC-normalized (this expands ligatures like ﬁ and turns math letters like 𝑥 into plain letters), accents stripped, lower-cased, and only letters and digits kept. Whitespace, line breaks, hyphenation, dashes and quote marks therefore can't cause a mismatch. Every key character records the text-layer item and character offset it came from. The matcher then tries, in order:
 
@@ -113,7 +119,7 @@ npm run package     # dist/paper-qa-<version>.zip
 
 - `npm run check` runs static checks: JS syntax, manifest and package versions match, every referenced file exists, and the vendored viewer is patched.
 - `npm run test:matcher` runs the matcher stress test (it downloads three arXiv papers). It cuts random passages out of each paper's text layer, distorts them the way model quotes tend to differ (typography changes, extra line breaks, dropped citations, `...` elisions, a few changed or deleted words, passages crossing a page break), and checks that the highlight lands on the original characters. Current results on ResNet (1512.03385), BERT (1810.04805) and GPT-3 (2005.14165): 1250/1260 passages found. All of the misses are in tables of contents, tables or figure labels, where the text is mostly dot leaders or repeated tokens. Text that doesn't occur in the paper is correctly reported as not found.
-- `npm run test:e2e` loads the extension into headless Chrome with a mocked Claude API and checks the whole flow: answering, highlights, quote navigation, zoom, cache restore, export, local files and the open-PDF banner. Set `CHROME_PATH` if Chrome isn't in a standard location, and `EXTENSION_DIR` to test an unzipped package.
+- `npm run test:e2e` loads the extension into headless Chrome with a mocked Claude API and checks the whole flow: answering, highlights, quote navigation, zoom, cache restore, PDF and Markdown export, local files and the open-PDF banner. Set `CHROME_PATH` if Chrome isn't in a standard location, and `EXTENSION_DIR` to test an unzipped package.
 - `npm run store-assets` regenerates the icons, store screenshots and promo tiles.
 
 CI (`.github/workflows/ci.yml`) runs all of this on every push and pull request. It runs the end-to-end test against the built store package and uploads that package as an artifact.

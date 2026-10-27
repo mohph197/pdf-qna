@@ -25,6 +25,12 @@ BUILT FOR REAL PAPERS
 • Quotes are located even across two-column layouts, hyphenated line breaks, ligatures, page breaks and dropped citation numbers.
 • Approximate and low-confidence matches are clearly labeled.
 • Export a copy of the PDF with the highlights saved as real PDF annotations, visible in Acrobat, Preview and any other reader.
+
+• Need something other than a short answer? Ask for a free-form answer, such as a table of every dataset or the hyperparameters as JSON, and Claude follows your format, quoting the paper only where it helps.
+
+• Optionally let Claude search the web for a question. Those answers list the pages they rely on, with links and supporting quotes.
+
+• Export the questions, answers and quotes, with page numbers, as a Markdown file for your notes.
 • Answers are cached per file, so reopening a paper brings its highlights back instantly at no extra cost.
 • Works with local files too (enable "Allow access to file URLs").
 

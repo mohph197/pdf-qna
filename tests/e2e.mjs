@@ -96,16 +96,74 @@ const QUESTIONS = [
   "What hardware was used?",
 ];
 
-const sse = [
-  { type: "message_start", message: { model: "claude-opus-5-5", usage: { input_tokens: 17000 } } },
+const toSse = (events) => events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join("");
+const textReply = (text, usage = {}) => [
   { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
-  { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: JSON.stringify(ANSWERS) } },
+  { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
   { type: "content_block_stop", index: 0 },
-  { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 400 } },
+  { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 400, ...usage } },
   { type: "message_stop" },
-]
-  .map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`)
-  .join("");
+];
+const start = { type: "message_start", message: { model: "claude-opus-5-5", usage: { input_tokens: 17000 } } };
+const sse = toSse([start, ...textReply(JSON.stringify(ANSWERS))]);
+
+// A web search question. The first reply searches and pauses (pause_turn);
+// the resumed reply answers, citing one real search result and one made-up
+// page that must be dropped.
+const WEB_QUESTION = "Where is the official code released?";
+const CODE_URL = "https://github.com/KaimingHe/deep-residual-networks";
+const webPaused = toSse([
+  start,
+  { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+  { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Let me search for the code." } },
+  { type: "content_block_stop", index: 0 },
+  { type: "content_block_start", index: 1, content_block: { type: "server_tool_use", id: "srvtoolu_1", name: "web_search", input: {} } },
+  { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '{"query":"resnet official code"}' } },
+  { type: "content_block_stop", index: 1 },
+  {
+    type: "content_block_start",
+    index: 2,
+    content_block: {
+      type: "web_search_tool_result",
+      tool_use_id: "srvtoolu_1",
+      content: [{ type: "web_search_result", url: CODE_URL, title: "KaimingHe/deep-residual-networks", encrypted_content: "enc", page_age: null }],
+    },
+  },
+  { type: "content_block_stop", index: 2 },
+  { type: "message_delta", delta: { stop_reason: "pause_turn" }, usage: { output_tokens: 50, server_tool_use: { web_search_requests: 1 } } },
+  { type: "message_stop" },
+]);
+const webAnswer = toSse([
+  start,
+  ...textReply(
+    JSON.stringify({
+      answers: [
+        {
+          question_index: 1,
+          answerable: true,
+          answer: "The authors released their models on GitHub (from the web).",
+          quotes: [],
+          web_sources: [
+            { url: `${CODE_URL}/`, title: "deep-residual-networks", quote: "Deep Residual Learning for Image Recognition" },
+            { url: "https://example.com/made-up", title: "Made up", quote: "Not a real search result." },
+          ],
+        },
+      ],
+    }),
+  ),
+]);
+
+// A free-form request spanning two lines, answered as a table without quotes.
+const FREEFORM_REQUEST = "List the datasets used.\nFormat: a Markdown table with columns name | images";
+const FREEFORM_ANSWER = "| name | images |\n|---|---|\n| ImageNet | 1.28M |\n| CIFAR-10 | 50k |";
+const freeformReply = toSse([
+  start,
+  ...textReply(
+    JSON.stringify({
+      answers: [{ question_index: 1, answerable: true, answer: FREEFORM_ANSWER, quotes: [], web_sources: [] }],
+    }),
+  ),
+]);
 
 const server = createServer(async (req, res) => {
   res.writeHead(200, { "content-type": "application/pdf" });
@@ -142,7 +200,11 @@ try {
   const cdp = (await swTarget.worker()).client;
   const apiCalls = [];
   cdp.on("Fetch.requestPaused", async (ev) => {
-    apiCalls.push({ headers: ev.request.headers, body: JSON.parse(ev.request.postData ?? "{}") });
+    const body = JSON.parse(ev.request.postData ?? "{}");
+    apiCalls.push({ headers: ev.request.headers, body });
+    const resumed = body.messages.at(-1).role === "assistant";
+    const freeform = body.messages[0].content[1].text.includes("[free-form]");
+    const reply = body.tools ? (resumed ? webAnswer : webPaused) : freeform ? freeformReply : sse;
     await cdp.send("Fetch.fulfillRequest", {
       requestId: ev.requestId,
       responseCode: 200,
@@ -150,7 +212,7 @@ try {
         { name: "content-type", value: "text/event-stream" },
         { name: "access-control-allow-origin", value: "*" },
       ],
-      body: Buffer.from(sse).toString("base64"),
+      body: Buffer.from(reply).toString("base64"),
     });
   });
   await cdp.send("Fetch.enable", { patterns: [{ urlPattern: "https://api.anthropic.com/*" }] });
@@ -191,6 +253,7 @@ try {
     assert.equal(call.headers["x-api-key"], "sk-ant-test-key");
     assert.equal(call.body.model, "claude-opus-5-5");
     assert.equal(call.body.output_config.format.type, "json_schema");
+    assert.equal(call.body.tools, undefined, "web search tool sent without being asked for");
     const badges = await page.$$eval(".qa-quote", (els) => els.map((e) => e.querySelector(".qa-badge")?.textContent ?? "exact"));
     assert.deepEqual(badges, ["exact", "exact", "exact", "exact", "exact", "exact", "not found in text"]);
     const text = await page.$$eval('.page[data-page-number="1"] .qa-hl', (els) => els.map((e) => e.textContent).join(""));
@@ -248,6 +311,68 @@ try {
     await page.click(".qa-footer .qa-btn");
     await page.waitForFunction(() => window.__exported > 0, { timeout: 20000 });
     assert.equal(await page.$eval(".qa-error", (e) => e.hidden), true);
+  });
+
+  await step("Markdown export lists answers with quotes and pages", async () => {
+    await page.evaluate(() => {
+      window.__markdown = null;
+      const orig = URL.createObjectURL;
+      URL.createObjectURL = (blob) => {
+        if (blob.type.startsWith("text/markdown")) blob.text().then((t) => (window.__markdown = t));
+        return orig(blob);
+      };
+    });
+    await page.click(".qa-footer .qa-btn:nth-child(2)");
+    await page.waitForFunction(() => window.__markdown, { timeout: 10000 });
+    const md = await page.evaluate(() => window.__markdown);
+    assert.match(md, /^# .+\.pdf\n/);
+    assert.match(md, /## 2\. What error does the ensemble reach\?\n\nAn ensemble of residual nets reaches 3\.57% error/);
+    assert.match(md, /> “An ensemble of these residual nets achieves 3\.57% error on the ImageNet test set\.”\n>\n> — p\. 1\n/);
+    assert.match(md, /## 4\. How much energy does training use\?\n\n\*\*Not answered in the paper\.\*\*/);
+    assert.match(md, /— p\. 6 _\(not found in the PDF text\)_/);
+  });
+
+  await step("web search questions send the tool, resume after pause_turn and list verified sources", async () => {
+    await page.click(".qa-options input");
+    await page.type(".qa-input", WEB_QUESTION);
+    await page.click(".qa-compose .qa-btn:not(.qa-primary)");
+    await page.click(".qa-options input"); // off again for later questions
+    await page.click(".qa-primary");
+    await page.waitForFunction(() => document.querySelector(".qa-web-source"), { timeout: 30000 });
+    const calls = apiCalls.slice(1);
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[0].body.tools, [{ type: "web_search_20260209", name: "web_search", max_uses: 5 }]);
+    assert.match(calls[0].body.messages[0].content[1].text, /1\. \[web search allowed\] Where is the official code released\?/);
+    const turn = calls[1].body.messages.at(-1).content;
+    assert.deepEqual(
+      turn.map((b) => b.type),
+      ["text", "server_tool_use", "web_search_tool_result"],
+    );
+    assert.deepEqual(turn[1].input, { query: "resnet official code" });
+    assert.equal(turn[2].content[0].encrypted_content, "enc");
+    const sources = await page.$$eval(".qa-web-source", (els) => els.map((e) => [e.href, e.textContent]));
+    assert.deepEqual(sources, [[CODE_URL, "github.comKaimingHe/deep-residual-networks“Deep Residual Learning for Image Recognition”"]]);
+    assert.equal(await page.$$eval(".qa-card .qa-tag-q", (e) => e.length), 1);
+    assert.match(await status(), /1 web search$/);
+  });
+
+  await step("free-form requests stay whole and are answered without quotes", async () => {
+    await page.click(".qa-options label:nth-child(2) input");
+    await page.type(".qa-input", FREEFORM_REQUEST);
+    await page.click(".qa-compose .qa-btn:not(.qa-primary)");
+    await page.click(".qa-options label:nth-child(2) input");
+    assert.equal(await page.$$eval(".qa-card", (e) => e.length), 7, "a multi-line free-form request must be one question");
+    await page.click(".qa-primary");
+    await page.waitForFunction(() => document.querySelector(".qa-freeform"), { timeout: 30000 });
+    const call = apiCalls.at(-1);
+    assert.equal(call.body.max_tokens, 32000);
+    assert.match(call.body.messages[0].content[1].text, /^Questions:\n1\. \[free-form\] List the datasets used\.\nFormat:/);
+    assert.equal(await page.$eval(".qa-freeform", (e) => e.textContent), FREEFORM_ANSWER);
+    const card = await page.$$eval(".qa-card", (els) => {
+      const last = els.at(-1);
+      return { quotes: last.querySelectorAll(".qa-quote").length, copy: last.querySelector(".qa-answer-actions button")?.textContent };
+    });
+    assert.deepEqual(card, { quotes: 0, copy: "Copy answer" });
   });
 
   await step("local file:// PDFs load (with file access allowed)", async () => {
