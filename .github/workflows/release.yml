@@ -23,7 +23,7 @@ jobs:
     outputs:
       package: ${{ steps.package.outputs.file }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v5
         with:
@@ -96,7 +96,7 @@ jobs:
     timeout-minutes: 15
     environment: chrome-web-store
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v5
         with:
