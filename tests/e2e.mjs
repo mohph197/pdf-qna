@@ -226,6 +226,9 @@ try {
 
   await step("options page saves an API key", async () => {
     await page.goto(`chrome-extension://${id}/options/options.html`);
+    // init() fills the key field from storage asynchronously and would
+    // overwrite anything typed before it ran; the model list is filled after.
+    await page.waitForSelector("#model option");
     await page.type("#apiKey", "sk-ant-test-key");
     await page.click("#save");
     await page.waitForFunction(() => document.querySelector("#saved").textContent === "Saved.");
