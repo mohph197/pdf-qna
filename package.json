@@ -1,0 +1,29 @@
+{
+  "name": "paper-qa-extension",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Chrome extension: ask Claude questions about a research paper PDF and highlight the answers. npm is only used for dev tooling; the extension itself has no build step.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mohph197/pdf-qna.git"
+  },
+  "scripts": {
+    "check": "node scripts/check.mjs",
+    "papers": "./scripts/fetch-test-papers.sh",
+    "test:matcher": "npm run papers && node tests/matcher-test.mjs tests/papers/*.pdf",
+    "test:e2e": "npm run papers && node tests/e2e.mjs",
+    "test": "npm run check && npm run test:matcher && npm run test:e2e",
+    "package": "./scripts/package.sh",
+    "store-assets": "npm run papers && node scripts/store-assets.mjs",
+    "vendor": "./scripts/vendor.sh"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "pdfjs-dist": "6.4.299",
+    "puppeteer-core": "24.10.0"
+  }
+}

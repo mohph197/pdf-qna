@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Paper Q&amp;A settings</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Paper Q&amp;A settings</h1>
+
+      <section>
+        <label for="apiKey">Anthropic API key</label>
+        <div class="row">
+          <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…" />
+          <button id="toggleKey" type="button">Show</button>
+        </div>
+        <p class="hint">
+          Stored only in this browser (<code>chrome.storage.local</code>) and sent only to api.anthropic.com.
+          Create a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">console.anthropic.com</a>.
+        </p>
+      </section>
+
+      <section>
+        <label for="model">Model</label>
+        <div class="row">
+          <select id="model"></select>
+          <button id="loadModels" type="button">Test key &amp; load models</button>
+        </div>
+        <p class="hint" id="modelHint"></p>
+      </section>
+
+      <section>
+        <label for="effort">Effort</label>
+        <select id="effort">
+          <option value="low">Low: fastest, cheapest</option>
+          <option value="medium">Medium (default)</option>
+          <option value="high">High: most thorough</option>
+        </select>
+        <p class="hint">How much Claude thinks before answering. Medium is plenty for most papers.</p>
+      </section>
+
+      <section>
+        <label for="openMode">When a PDF opens in Chrome</label>
+        <select id="openMode">
+          <option value="ask">Offer to open it in Paper Q&amp;A</option>
+          <option value="always">Always open it in Paper Q&amp;A</option>
+          <option value="never">Do nothing (use the toolbar button)</option>
+        </select>
+      </section>
+
+      <section>
+        <label>Local files</label>
+        <p class="hint">
+          To use local PDFs (<code>file://</code>), open <code>chrome://extensions</code>, click <b>Details</b> on Paper Q&amp;A
+          and turn on <b>Allow access to file URLs</b>.
+          <span id="fileAccess"></span>
+        </p>
+      </section>
+
+      <section>
+        <label>Cached answers</label>
+        <div class="row">
+          <span id="cacheInfo" class="hint"></span>
+          <button id="clearCache" type="button">Clear cache</button>
+        </div>
+      </section>
+
+      <div class="actions">
+        <button id="save" class="primary" type="button">Save</button>
+        <span id="saved" role="status"></span>
+      </div>
+    </main>
+    <script src="options.js" type="module"></script>
+  </body>
+</html>

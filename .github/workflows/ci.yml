@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Check, test and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Static checks (syntax, manifest, vendored viewer patch)
+        run: npm run check
+
+      - name: Cache arXiv test papers
+        uses: actions/cache@v4
+        with:
+          path: tests/papers
+          key: arxiv-papers-${{ hashFiles('scripts/fetch-test-papers.sh') }}
+
+      - name: Matcher test on real papers
+        run: npm run test:matcher
+
+      - name: Build store package
+        run: npm run package
+
+      - name: End-to-end test of the package in headless Chrome
+        run: |
+          unzip -q dist/*.zip -d "$RUNNER_TEMP/extension"
+          npm run test:e2e
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+          EXTENSION_DIR: ${{ runner.temp }}/extension
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension-package
+          path: dist/*.zip
+          if-no-files-found: error

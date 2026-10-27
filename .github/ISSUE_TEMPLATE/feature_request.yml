@@ -1,0 +1,11 @@
+name: Feature request
+description: Suggest an improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like Paper Q&A to do?
+      description: Describe the problem you're trying to solve, then your idea.
+    validations:
+      required: true

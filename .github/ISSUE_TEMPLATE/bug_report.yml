@@ -1,0 +1,30 @@
+name: Bug report
+description: Something doesn't work, or a quote is highlighted in the wrong place
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what you saw instead.
+    validations:
+      required: true
+  - type: input
+    id: pdf
+    attributes:
+      label: PDF
+      description: Link to the PDF (e.g. an arXiv URL), if it's public. Matching problems are much easier to fix with the paper.
+  - type: textarea
+    id: quote
+    attributes:
+      label: Question and quote (for matching problems)
+      description: The question, and the quote shown in the sidebar with its badge (≈, ⚠ low confidence, not found).
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Extension version (chrome://extensions) and Chrome version.
+      placeholder: "Paper Q&A 1.0.0, Chrome 156"
+  - type: markdown
+    attributes:
+      value: "Please never paste your API key into an issue."

@@ -1,0 +1,4 @@
+node_modules/
+tests/papers/
+dist/
+.DS_Store

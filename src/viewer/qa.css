@@ -1,0 +1,326 @@
+/* Paper Q&A sidebar and highlight styles, layered on the pdf.js viewer. */
+
+:root {
+  --qa-w: 380px;
+  --qa-bg: light-dark(#f9fafb, #1c1b22);
+  --qa-panel: light-dark(#ffffff, #2b2a33);
+  --qa-fg: light-dark(#1f2937, #f3f4f6);
+  --qa-muted: light-dark(#6b7280, #a1a1aa);
+  --qa-border: light-dark(#e5e7eb, #3f3f46);
+  --qa-accent: #d97706;
+  --qa-danger: light-dark(#b91c1c, #f87171);
+}
+
+html.qa-open #outerContainer {
+  width: calc(100% - var(--qa-w));
+}
+
+.qa-sidebar {
+  position: fixed;
+  inset: 0 0 0 auto;
+  width: var(--qa-w);
+  display: flex;
+  flex-direction: column;
+  background: var(--qa-bg);
+  color: var(--qa-fg);
+  border-left: 1px solid var(--qa-border);
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  z-index: 100000;
+  box-sizing: border-box;
+}
+.qa-sidebar[hidden] {
+  display: none;
+}
+.qa-sidebar * {
+  box-sizing: border-box;
+}
+
+.qa-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--qa-border);
+  font-size: 14px;
+}
+.qa-header-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.qa-status {
+  padding: 6px 12px;
+  color: var(--qa-muted);
+  font-size: 12px;
+  min-height: 1.45em;
+}
+.qa-error {
+  margin: 0 12px 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: light-dark(#fef2f2, #3b1d1d);
+  color: var(--qa-danger);
+  border: 1px solid light-dark(#fecaca, #7f1d1d);
+}
+.qa-error[hidden] {
+  display: none;
+}
+
+.qa-compose {
+  padding: 0 12px 10px;
+  border-bottom: 1px solid var(--qa-border);
+}
+.qa-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 64px;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--qa-border);
+  background: var(--qa-panel);
+  color: var(--qa-fg);
+  font: inherit;
+}
+.qa-input:focus {
+  outline: 2px solid var(--qa-accent);
+  outline-offset: -1px;
+}
+.qa-row {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.qa-btn {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--qa-border);
+  background: var(--qa-panel);
+  color: var(--qa-fg);
+  font: inherit;
+  cursor: pointer;
+}
+.qa-btn:hover:not(:disabled) {
+  border-color: var(--qa-muted);
+}
+.qa-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.qa-primary {
+  background: var(--qa-accent);
+  border-color: var(--qa-accent);
+  color: #fff;
+  font-weight: 600;
+}
+.qa-danger {
+  color: var(--qa-danger);
+}
+.qa-icon {
+  border: 0;
+  background: none;
+  color: var(--qa-muted);
+  font-size: 15px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.qa-icon:hover:not(:disabled) {
+  background: var(--qa-border);
+  color: var(--qa-fg);
+}
+.qa-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: inherit;
+  text-decoration: underline;
+  font: inherit;
+  cursor: pointer;
+}
+
+.qa-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.qa-empty {
+  color: var(--qa-muted);
+  text-align: center;
+  margin-top: 24px;
+}
+
+.qa-card {
+  background: var(--qa-panel);
+  border: 1px solid var(--qa-border);
+  border-left: 4px solid var(--qa-color);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.qa-q {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-weight: 600;
+}
+.qa-swatch {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  border-radius: 2px;
+  background: var(--qa-color);
+}
+.qa-q-text {
+  flex: 1;
+}
+.qa-remove {
+  font-size: 12px;
+}
+.qa-answer {
+  margin: 6px 0 0 18px;
+}
+.qa-muted {
+  color: var(--qa-muted);
+  font-style: italic;
+}
+.qa-tag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  background: var(--qa-border);
+  color: var(--qa-muted);
+}
+.qa-unanswerable {
+  color: var(--qa-muted);
+}
+
+.qa-quotes {
+  list-style: none;
+  margin: 8px 0 0 18px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.qa-quote {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border: 1px solid var(--qa-border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--qa-color) 12%, transparent);
+  color: var(--qa-fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.qa-quote:hover:not(:disabled) {
+  border-color: var(--qa-color);
+}
+.qa-quote:disabled {
+  cursor: default;
+  background: none;
+  opacity: 0.75;
+}
+.qa-page {
+  font-weight: 600;
+  margin-right: 6px;
+  color: var(--qa-muted);
+}
+.qa-quote-text {
+  font-style: italic;
+}
+.qa-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-style: normal;
+  background: var(--qa-border);
+  color: var(--qa-muted);
+  white-space: nowrap;
+}
+.qa-badge.qa-low {
+  background: light-dark(#fef3c7, #422006);
+  color: light-dark(#92400e, #fbbf24);
+}
+.qa-badge.qa-none {
+  background: light-dark(#fee2e2, #3b1d1d);
+  color: var(--qa-danger);
+}
+
+.qa-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--qa-border);
+}
+
+.qa-reopen {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 100000;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--qa-accent);
+  color: #fff;
+  font: 600 13px system-ui, sans-serif;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.25);
+  cursor: pointer;
+}
+.qa-reopen[hidden] {
+  display: none;
+}
+
+/* Highlights inside the pdf.js text layer. The text layer positions every
+   span absolutely and scales it; our inner spans must opt out of that. */
+.textLayer span.qa-hl {
+  position: static;
+  transform: none;
+  font-size: inherit;
+  color: transparent;
+  background-color: color-mix(in srgb, var(--qa-color) 45%, transparent);
+  border-radius: 2px;
+  mix-blend-mode: multiply;
+}
+.textLayer span.qa-hl[style*="--qa-color2"] {
+  box-shadow: inset 0 -0.18em 0 color-mix(in srgb, var(--qa-color2) 80%, transparent);
+}
+.textLayer span.qa-hl.qa-hl-low {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    transparent 0 3px,
+    rgb(255 255 255 / 0.35) 3px 6px
+  );
+}
+.textLayer span.qa-hl.qa-flash {
+  animation: qa-flash 1.6s ease-out 1;
+}
+@keyframes qa-flash {
+  0%,
+  30% {
+    background-color: color-mix(in srgb, var(--qa-color) 95%, transparent);
+    outline: 2px solid var(--qa-color);
+  }
+  100% {
+    outline: 2px solid transparent;
+  }
+}
+
+@media (max-width: 760px) {
+  :root {
+    --qa-w: 300px;
+  }
+}
