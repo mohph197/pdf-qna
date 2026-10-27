@@ -153,6 +153,18 @@ const webAnswer = toSse([
   ),
 ]);
 
+// A free-form request spanning two lines, answered as a table without quotes.
+const FREEFORM_REQUEST = "List the datasets used.\nFormat: a Markdown table with columns name | images";
+const FREEFORM_ANSWER = "| name | images |\n|---|---|\n| ImageNet | 1.28M |\n| CIFAR-10 | 50k |";
+const freeformReply = toSse([
+  start,
+  ...textReply(
+    JSON.stringify({
+      answers: [{ question_index: 1, answerable: true, answer: FREEFORM_ANSWER, quotes: [], web_sources: [] }],
+    }),
+  ),
+]);
+
 const server = createServer(async (req, res) => {
   res.writeHead(200, { "content-type": "application/pdf" });
   res.end(await readFile(PAPER));
@@ -191,7 +203,8 @@ try {
     const body = JSON.parse(ev.request.postData ?? "{}");
     apiCalls.push({ headers: ev.request.headers, body });
     const resumed = body.messages.at(-1).role === "assistant";
-    const reply = body.tools ? (resumed ? webAnswer : webPaused) : sse;
+    const freeform = body.messages[0].content[1].text.includes("[free-form]");
+    const reply = body.tools ? (resumed ? webAnswer : webPaused) : freeform ? freeformReply : sse;
     await cdp.send("Fetch.fulfillRequest", {
       requestId: ev.requestId,
       responseCode: 200,
@@ -341,6 +354,25 @@ try {
     assert.deepEqual(sources, [[CODE_URL, "github.comKaimingHe/deep-residual-networks“Deep Residual Learning for Image Recognition”"]]);
     assert.equal(await page.$$eval(".qa-card .qa-tag-q", (e) => e.length), 1);
     assert.match(await status(), /1 web search$/);
+  });
+
+  await step("free-form requests stay whole and are answered without quotes", async () => {
+    await page.click(".qa-options label:nth-child(2) input");
+    await page.type(".qa-input", FREEFORM_REQUEST);
+    await page.click(".qa-compose .qa-btn:not(.qa-primary)");
+    await page.click(".qa-options label:nth-child(2) input");
+    assert.equal(await page.$$eval(".qa-card", (e) => e.length), 7, "a multi-line free-form request must be one question");
+    await page.click(".qa-primary");
+    await page.waitForFunction(() => document.querySelector(".qa-freeform"), { timeout: 30000 });
+    const call = apiCalls.at(-1);
+    assert.equal(call.body.max_tokens, 32000);
+    assert.match(call.body.messages[0].content[1].text, /^Questions:\n1\. \[free-form\] List the datasets used\.\nFormat:/);
+    assert.equal(await page.$eval(".qa-freeform", (e) => e.textContent), FREEFORM_ANSWER);
+    const card = await page.$$eval(".qa-card", (els) => {
+      const last = els.at(-1);
+      return { quotes: last.querySelectorAll(".qa-quote").length, copy: last.querySelector(".qa-answer-actions button")?.textContent };
+    });
+    assert.deepEqual(card, { quotes: 0, copy: "Copy answer" });
   });
 
   await step("local file:// PDFs load (with file access allowed)", async () => {

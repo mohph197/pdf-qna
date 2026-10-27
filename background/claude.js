@@ -243,7 +243,8 @@ async function streamWithRetry(args, onStatus) {
  * Ask questions about a paper.
  * @param {object} p
  * @param {string[]} p.pageTexts  text of every page, in order
- * @param {{ text: string, web?: boolean }[]} p.questions  web: may use web search
+ * @param {{ text: string, web?: boolean, freeform?: boolean }[]} p.questions
+ *   web: may use web search; freeform: answer in any format, quotes optional
  * @returns {Promise<{answers, model, usage, webSearches}>}
  */
 export async function askPaper({ apiKey, model, effort, pageTexts, questions, signal, onStatus, onDelta }) {
@@ -263,11 +264,13 @@ export async function askPaper({ apiKey, model, effort, pageTexts, questions, si
 
   const betas = info.fallbacks ? [FALLBACK_BETA] : [];
   const webAllowed = questions.map((q) => !!q.web);
+  const freeform = questions.map((q) => !!q.freeform);
   const tools = webAllowed.some(Boolean) ? [{ type: info.webSearch, name: "web_search", max_uses: 5 }] : [];
   let useSchema = true;
   const base = () => ({
     model,
-    max_tokens: 16000,
+    // Free-form answers (tables, extractions) can be much longer than short ones.
+    max_tokens: freeform.some(Boolean) ? 32000 : 16000,
     system: SYSTEM_PROMPT,
     output_config: {
       effort,
@@ -315,7 +318,7 @@ export async function askPaper({ apiKey, model, effort, pageTexts, questions, si
       throw new ClaudeError("refusal", "Claude declined to answer these questions about this document.");
     }
     try {
-      const answers = parseAnswers(reply.text, questions.length, pageTexts.length, { webAllowed, searchResults });
+      const answers = parseAnswers(reply.text, questions.length, pageTexts.length, { webAllowed, freeform, searchResults });
       return { answers, model: reply.model, usage: usageTotal, webSearches };
     } catch (e) {
       if (attempt === 1) {

@@ -36,7 +36,10 @@ export function answersToMarkdown({ name, questions, results, matches, date = ne
   );
 
   questions.forEach((q, n) => {
-    out.push("", `## ${n + 1}. ${q.text}`, "");
+    // Multi-line (free-form) requests: first line as the heading, the rest verbatim.
+    const [title, ...rest] = q.text.split(/\r?\n/);
+    out.push("", `## ${n + 1}. ${title}`, "");
+    if (rest.some((l) => l.trim())) out.push("```text", ...rest, "```", "");
     const res = results[q.id];
     if (!res) {
       out.push("_Not asked yet._");

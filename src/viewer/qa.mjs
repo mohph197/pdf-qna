@@ -12,7 +12,7 @@ export const COLORS = ["#ffd400", "#4dabf7", "#69db7c", "#ff8787", "#b197fc", "#
 
 const state = {
   doc: null, // { hash, name, bytes, pages, pageTexts, index }
-  questions: [], // [{ id, text, color, web }]
+  questions: [], // [{ id, text, color, web, freeform }]
   results: {}, // id -> { answerable, answer, quotes: [{ text, page }], webSources: [{ url, title, quote }], model }
   matches: {}, // id -> [match per quote]
   pending: new Set(), // ids currently being asked
@@ -60,6 +60,7 @@ function buildSidebar() {
     },
   });
   ui.web = h("input", { type: "checkbox", class: "qa-check" });
+  ui.freeform = h("input", { type: "checkbox", class: "qa-check" });
   ui.add = h("button", { class: "qa-btn", type: "button", onclick: addQuestionsFromInput, title: "⌘/Ctrl+Enter" }, "Add");
   ui.ask = h("button", { class: "qa-btn qa-primary", type: "button", onclick: () => ask(false) }, "Find answers");
   ui.list = h("div", { class: "qa-list" });
@@ -100,6 +101,15 @@ function buildSidebar() {
           { title: "Claude may also search the web for these questions ($10 per 1,000 searches on your API account)" },
           ui.web,
           "Search the web",
+        ),
+        h(
+          "label",
+          {
+            title:
+              "Answer in whatever format the request asks for (lists, tables, JSON…); quotes become optional. The whole box is one request.",
+          },
+          ui.freeform,
+          "Free-form answer",
         ),
       ),
       h("div", { class: "qa-row" }, ui.add, ui.ask),
@@ -189,11 +199,20 @@ function render() {
         body.push(
           h(
             "div",
-            { class: `qa-answer${res.answerable ? "" : " qa-unanswerable"}` },
+            { class: `qa-answer${res.answerable ? "" : " qa-unanswerable"}${q.freeform ? " qa-freeform" : ""}` },
             res.answerable ? null : h("span", { class: "qa-tag" }, "Not answered in the paper"),
             res.answer,
           ),
         );
+        if (q.freeform && res.answerable) {
+          body.push(
+            h(
+              "div",
+              { class: "qa-answer-actions" },
+              h("button", { class: "qa-link", type: "button", onclick: (e) => copyAnswer(e.currentTarget, res.answer) }, "Copy answer"),
+            ),
+          );
+        }
         if (res.quotes.length) {
           body.push(
             h(
@@ -258,6 +277,7 @@ function render() {
             { class: "qa-q-text" },
             `${n + 1}. ${q.text}`,
             q.web ? h("span", { class: "qa-tag qa-tag-q", title: "Claude may search the web for this question" }, "web") : null,
+            q.freeform ? h("span", { class: "qa-tag qa-tag-q", title: "Free-form answer; quotes are optional" }, "free-form") : null,
           ),
           h(
             "button",
@@ -290,23 +310,37 @@ function hostname(url) {
   }
 }
 
+async function copyAnswer(button, text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    button.textContent = "Copied";
+  } catch {
+    button.textContent = "Copy failed";
+  }
+  setTimeout(() => (button.textContent = "Copy answer"), 1500);
+}
+
 // ---------------------------------------------------------------------------
 // Questions
 
 let nextId = 1;
-function newQuestion(text, { web = false } = {}) {
+function newQuestion(text, { web = false, freeform = false } = {}) {
   const used = new Set(state.questions.map((q) => q.color));
   const color = COLORS.find((c) => !used.has(c)) ?? COLORS[state.questions.length % COLORS.length];
-  return { id: `q${Date.now().toString(36)}${nextId++}`, text, color, web };
+  return { id: `q${Date.now().toString(36)}${nextId++}`, text, color, web, freeform };
 }
 
 function addQuestionsFromInput() {
-  const lines = ui.input.value
-    .split("\n")
-    .map((l) => l.replace(/^\s*(?:\d+[.)]|[-*•])\s*/, "").trim())
-    .filter(Boolean);
+  const freeform = ui.freeform.checked;
+  // A free-form request often spans lines (e.g. a format spec), so it stays whole.
+  const lines = freeform
+    ? [ui.input.value.trim()].filter(Boolean)
+    : ui.input.value
+        .split("\n")
+        .map((l) => l.replace(/^\s*(?:\d+[.)]|[-*•])\s*/, "").trim())
+        .filter(Boolean);
   if (!lines.length) return;
-  for (const line of lines) state.questions.push(newQuestion(line, { web: ui.web.checked }));
+  for (const line of lines) state.questions.push(newQuestion(line, { web: ui.web.checked, freeform }));
   ui.input.value = "";
   save();
   render();
@@ -527,7 +561,7 @@ function ask(all) {
   port.postMessage({
     type: "ask",
     pageTexts: state.doc.pageTexts,
-    questions: targets.map((q) => ({ text: q.text, web: !!q.web })),
+    questions: targets.map((q) => ({ text: q.text, web: !!q.web, freeform: !!q.freeform })),
   });
 }
 
