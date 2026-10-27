@@ -166,10 +166,13 @@ const freeformReply = toSse([
   ),
 ]);
 
-// Mocked Semantic Scholar papers: the open paper (found by the arXiv stamp on
-// its first page) and one cited paper (found by the title in its reference).
-const S2_PAPERS = {
-  "/graph/v1/paper/ARXIV:1512.03385": {
+// Mocked paper lookups. Semantic Scholar knows the open paper (found by the
+// arXiv stamp on its first page) but is "busy" for title searches, so the
+// cited paper comes from arXiv's title search plus OpenAlex. Crossref has
+// neither (VGG was published at ICLR, which has no DOIs).
+const VGG = "Very Deep Convolutional Networks for Large-Scale Image Recognition";
+const LOOKUPS = {
+  "https://api.semanticscholar.org/graph/v1/paper/ARXIV:1512.03385": {
     paperId: "2c03df8b48bf3fa39054345bafabfeff15bfd11d",
     title: "Deep Residual Learning for Image Recognition",
     url: "https://www.semanticscholar.org/paper/2c03df8b48bf3fa39054345bafabfeff15bfd11d",
@@ -185,20 +188,20 @@ const S2_PAPERS = {
     externalIds: { ArXiv: "1512.03385", DOI: "10.1109/cvpr.2016.90" },
     citationStyles: { bibtex: "@inproceedings{He2015DeepRL}" },
   },
-  "/graph/v1/paper/search/match": {
-    data: [
-      {
-        paperId: "eb42cf88027de515750f230b23b1a057dc782108",
-        title: "Very Deep Convolutional Networks for Large-Scale Image Recognition",
-        url: "https://www.semanticscholar.org/paper/eb42cf88027de515750f230b23b1a057dc782108",
-        authors: [{ name: "K. Simonyan" }, { name: "Andrew Zisserman" }],
-        venue: "International Conference on Learning Representations",
-        year: 2014,
-        citationCount: 104000,
-        externalIds: { ArXiv: "1409.1556" },
-        matchScore: 140,
-      },
-    ],
+  "https://api.semanticscholar.org/graph/v1/paper/search/match": { status: 429, body: { message: "Too Many Requests" } },
+  "https://api.crossref.org/works": { message: { items: [] } },
+  "https://export.arxiv.org/api/query": {
+    type: "application/atom+xml",
+    body: `<feed><entry><id>http://arxiv.org/abs/1409.1556v6</id><title>${VGG}</title></entry></feed>`,
+  },
+  "https://api.openalex.org/works/doi:10.48550/arxiv.1409.1556": {
+    id: "https://openalex.org/W1686810756",
+    doi: "https://doi.org/10.48550/arxiv.1409.1556",
+    display_name: VGG,
+    publication_year: 2014,
+    cited_by_count: 88465,
+    authorships: [{ author: { display_name: "Karen Simonyan" } }, { author: { display_name: "Andrew Zisserman" } }],
+    primary_location: { source: { display_name: "arXiv (Cornell University)", type: "repository" } },
   },
 };
 
@@ -236,17 +239,19 @@ try {
   const swTarget = await browser.waitForTarget((t) => t.type() === "service_worker" && t.url().includes(id));
   const cdp = (await swTarget.worker()).client;
   const apiCalls = [];
-  const s2Calls = [];
+  const lookupCalls = [];
   cdp.on("Fetch.requestPaused", async (ev) => {
-    if (ev.request.url.startsWith("https://api.semanticscholar.org/")) {
+    if (!ev.request.url.startsWith("https://api.anthropic.com/")) {
       const url = new URL(ev.request.url);
-      s2Calls.push(url);
-      const paper = S2_PAPERS[decodeURIComponent(url.pathname)];
+      lookupCalls.push(url);
+      const mock = LOOKUPS[decodeURIComponent(url.origin + url.pathname)];
+      const wrapped = mock?.status || mock?.type;
+      const body = wrapped ? mock.body : (mock ?? { error: "not found" });
       await cdp.send("Fetch.fulfillRequest", {
         requestId: ev.requestId,
-        responseCode: paper ? 200 : 404,
-        responseHeaders: [{ name: "content-type", value: "application/json" }],
-        body: Buffer.from(JSON.stringify(paper ?? { error: "Paper not found" })).toString("base64"),
+        responseCode: wrapped ? (mock.status ?? 200) : mock ? 200 : 404,
+        responseHeaders: [{ name: "content-type", value: mock?.type ?? "application/json" }],
+        body: Buffer.from(typeof body === "string" ? body : JSON.stringify(body)).toString("base64"),
       });
       return;
     }
@@ -266,7 +271,13 @@ try {
     });
   });
   await cdp.send("Fetch.enable", {
-    patterns: [{ urlPattern: "https://api.anthropic.com/*" }, { urlPattern: "https://api.semanticscholar.org/*" }],
+    patterns: [
+      "https://api.anthropic.com/*",
+      "https://api.semanticscholar.org/*",
+      "https://api.crossref.org/*",
+      "https://api.openalex.org/*",
+      "https://export.arxiv.org/*",
+    ].map((urlPattern) => ({ urlPattern })),
   });
 
   const page = await browser.newPage();
@@ -299,7 +310,7 @@ try {
     assert.equal(page.url(), `chrome-extension://${id}/${base}/resnet.pdf`);
   });
 
-  await step("the paper info button shows the open paper from Semantic Scholar", async () => {
+  await step("the paper info button shows the open paper", async () => {
     await page.click("#qaInfoButton");
     await page.waitForSelector(".qa-pop .qa-paper-title", { timeout: 10000 });
     const card = await page.$eval(".qa-pop", (e) => ({
@@ -314,24 +325,40 @@ try {
       stats: "Cited by 243,353 · 33,155 influential · 54 references",
       links: ["Google Scholar", "Semantic Scholar", "arXiv", "DOI", "Open in Paper Q&A"],
     });
-    assert.equal(decodeURIComponent(s2Calls.at(-1).pathname), "/graph/v1/paper/ARXIV:1512.03385");
+    assert.ok(lookupCalls.some((u) => decodeURIComponent(u.pathname) === "/graph/v1/paper/ARXIV:1512.03385"));
+    assert.equal(await page.$eval(".qa-pop-source", (e) => e.textContent), "Data from Semantic Scholar");
     await page.keyboard.press("Escape");
     assert.equal(await page.$(".qa-pop"), null);
   });
 
-  await step("clicking a citation previews the cited paper instead of jumping", async () => {
+  await step("hovering a citation looks it up; clicking shows the cited paper instead of jumping", async () => {
     const before = await page.evaluate(() => PDFViewerApplication.page);
-    await page.waitForSelector('.annotationLayer [data-internal-link] a[href*="cite.Simonyan2015"]', { timeout: 10000 });
-    await page.$eval('.annotationLayer [data-internal-link] a[href*="cite.Simonyan2015"]', (a) => a.click());
+    const link = '.annotationLayer [data-internal-link] a[href*="cite.Simonyan2015"]';
+    await page.waitForSelector(link, { timeout: 10000 });
+    // Pointing at the citation starts the lookup, before any click.
+    await page.hover(link);
+    const fetched = () => lookupCalls.some((u) => u.pathname.endsWith("/doi:10.48550/arxiv.1409.1556"));
+    for (let i = 0; i < 40 && !fetched(); i++) await sleep(250);
+    assert.ok(fetched(), "hovering didn't start the lookup");
+    const match = lookupCalls.find((u) => u.pathname === "/graph/v1/paper/search/match");
+    assert.equal(match.searchParams.get("query"), "Very deep convolutional networks for large-scale image recognition");
+    const callsBefore = lookupCalls.length;
+    await page.click(link);
     await page.waitForSelector(".qa-pop .qa-paper-title", { timeout: 10000 });
     const card = await page.$eval(".qa-pop", (e) => ({
       title: e.querySelector(".qa-paper-title").textContent,
       stats: e.querySelector(".qa-paper-stats").textContent,
+      links: [...e.querySelectorAll(".qa-pop-links a")].map((a) => a.textContent),
+      source: e.querySelector(".qa-pop-source").textContent,
     }));
-    assert.deepEqual(card, { title: "Very Deep Convolutional Networks for Large-Scale Image Recognition", stats: "Cited by 104,000" });
-    const match = s2Calls.at(-1);
-    assert.equal(match.pathname, "/graph/v1/paper/search/match");
-    assert.equal(match.searchParams.get("query"), "Very deep convolutional networks for large-scale image recognition");
+    // Semantic Scholar was busy, so the card comes from arXiv and OpenAlex.
+    assert.deepEqual(card, {
+      title: VGG,
+      stats: "Cited by 88,465",
+      links: ["Google Scholar", "OpenAlex", "arXiv", "DOI", "Open in Paper Q&A"],
+      source: "Data from OpenAlex",
+    });
+    assert.equal(lookupCalls.length, callsBefore, "the click looked the paper up again");
     assert.equal(await page.evaluate(() => PDFViewerApplication.page), before, "the citation link navigated");
     if (SHOTS) await page.screenshot({ path: join(SHOTS, "screenshot-5-citation.png") });
     // "Go to reference" still takes you to the bibliography entry.

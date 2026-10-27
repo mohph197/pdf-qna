@@ -1,7 +1,8 @@
 // Paper previews: clicking a citation shows the cited paper (title, authors,
 // venue, citation count, summary, links) in a card, and the toolbar's info
 // button shows the same for the open paper. Lookups go through the service
-// worker to Semantic Scholar.
+// worker (Semantic Scholar, Crossref, OpenAlex, arXiv). Hovering a citation
+// starts its lookup, so the card is usually ready by the time it's clicked.
 
 import {
   findReferencesStart,
@@ -22,6 +23,8 @@ let getSource; // () => the PDF's original URL or null
 let enabled = true;
 let pop = null; // { el, anchor, kind }
 const cache = new Map(); // JSON query -> Promise<paper|null>
+const citations = new Map(); // JSON destination -> Promise<{ ref, query } | null>
+const CITE_LINK = ".annotationLayer [data-internal-link] a";
 
 export function initPapers(options) {
   ({ app, getDoc, getSource } = options);
@@ -32,11 +35,15 @@ export function initPapers(options) {
   addInfoButton();
   // Capture phase, so the card replaces pdf.js's own jump to the reference.
   document.addEventListener("click", onLinkClick, true);
+  document.addEventListener("pointerover", onLinkHover);
   document.addEventListener("mousedown", (e) => {
     if (pop && !pop.el.contains(e.target) && !pop.anchorEl?.contains(e.target)) closePop();
   });
   document.addEventListener("keydown", (e) => e.key === "Escape" && closePop());
-  app.eventBus.on("documentloaded", closePop);
+  app.eventBus.on("documentloaded", () => {
+    closePop();
+    citations.clear();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -74,18 +81,60 @@ function destFromHref(href) {
   return hash.includes("=") ? null : hash; // "page=3&zoom=…" is a view, not a destination
 }
 
-function onLinkClick(e) {
-  if (!enabled || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-  const a = e.target.closest?.(".annotationLayer [data-internal-link] a");
-  if (!a || !getDoc()) return;
+// The destination of a link that may be a citation, or null.
+function citationDest(target) {
+  const a = target.closest?.(CITE_LINK);
+  if (!a || !enabled || !getDoc()) return null;
   const dest = destFromHref(a.getAttribute("href"));
-  if (dest == null || isStructuralDestName(dest)) return;
+  return dest == null || isStructuralDestName(dest) ? null : { a, dest };
+}
+
+function onLinkClick(e) {
+  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  const link = citationDest(e.target);
+  if (!link) return;
   e.preventDefault();
   e.stopImmediatePropagation();
-  showCitation(dest, a).catch(() => app.pdfLinkService.goToDestination(dest));
+  showCitation(link.dest, link.a).catch(() => app.pdfLinkService.goToDestination(link.dest));
+}
+
+let hoverTimer = null;
+function onLinkHover(e) {
+  clearTimeout(hoverTimer);
+  const link = citationDest(e.target);
+  if (!link) return;
+  // A short dwell, so sweeping the pointer across a page doesn't look up
+  // every citation it crosses.
+  hoverTimer = setTimeout(() => {
+    resolveCitation(link.dest)
+      .then((cite) => cite && lookup(cite.query))
+      .catch(() => {});
+  }, 150);
 }
 
 async function showCitation(dest, linkEl) {
+  const cite = await resolveCitation(dest);
+  // Other links (to a section, figure or footnote) keep their usual behavior.
+  if (!cite) {
+    app.pdfLinkService.goToDestination(dest);
+    return;
+  }
+  const goToReference = () => {
+    closePop();
+    app.pdfLinkService.goToDestination(dest);
+  };
+  openPop(linkEl, "cite", () => paperCard(cite.query, { reference: cite.ref.text, goToReference }));
+}
+
+function resolveCitation(dest) {
+  const key = JSON.stringify(dest);
+  if (!citations.has(key)) citations.set(key, findCitation(dest));
+  return citations.get(key);
+}
+
+// The bibliography entry a citation link points to and its lookup query, or
+// null when the link isn't a citation.
+async function findCitation(dest) {
   const pdf = app.pdfDocument;
   const doc = getDoc();
   const explicit = typeof dest === "string" ? await pdf.getDestination(dest) : dest;
@@ -93,23 +142,13 @@ async function showCitation(dest, linkEl) {
   const pageIndex = Number.isInteger(explicit[0]) ? explicit[0] : await pdf.getPageIndex(explicit[0]);
   const [left, top] = destPoint(explicit);
   const ref = referenceAt(doc.pages, pageIndex, left, top);
-  // Other links (to a section, figure or footnote) keep their usual behavior.
   // Without a "cite." name, the target must look like a bibliography entry.
   doc.refsStart ??= findReferencesStart(doc.pages) ?? false;
   const looksLikeReference =
     ref &&
     (isCiteDestName(dest) ||
       (doc.refsStart && pageIndex >= doc.refsStart.page && /\b(1[89]|20)\d{2}[a-z]?\b/.test(ref.text) && ref.text.length > 30));
-  if (!looksLikeReference) {
-    app.pdfLinkService.goToDestination(dest);
-    return;
-  }
-  const query = { ...parseReference(ref.text), context: ref.text };
-  const goToReference = () => {
-    closePop();
-    app.pdfLinkService.goToDestination(dest);
-  };
-  openPop(linkEl, "cite", () => paperCard(query, { reference: ref.text, goToReference }));
+  return looksLikeReference ? { ref, query: { ...parseReference(ref.text), context: ref.text } } : null;
 }
 
 function destPoint(explicit) {
@@ -217,7 +256,7 @@ function paperCard(query, { reference, goToReference, fallbackTitle } = {}) {
     : null;
 
   const load = () => {
-    root.replaceChildren(refBlock ?? "", h("p", { class: "qa-pop-note qa-muted" }, "Looking up on Semantic Scholar…"), footer ?? "");
+    root.replaceChildren(refBlock ?? "", h("p", { class: "qa-pop-note qa-muted" }, "Looking up the paper…"), footer ?? "");
     const hasQuery = query.doi || query.arxiv || query.acl || query.title;
     (hasQuery ? lookup(query) : Promise.resolve(null)).then(
       (paper) => root.replaceChildren(paper ? paperDetails(paper) : notFound(), footer ?? ""),
@@ -251,8 +290,8 @@ function paperCard(query, { reference, goToReference, fallbackTitle } = {}) {
         "p",
         { class: "qa-pop-note qa-muted" },
         reference
-          ? "This reference wasn't found on Semantic Scholar."
-          : "Couldn't identify this paper on Semantic Scholar.",
+          ? "This reference wasn't found on Semantic Scholar, OpenAlex, Crossref or arXiv."
+          : "Couldn't identify this paper on Semantic Scholar, OpenAlex, Crossref or arXiv.",
       ),
       searchLinks(),
     );
@@ -268,14 +307,17 @@ function paperDetails(p) {
     .join(" · ");
   const pdfUrl = p.arxiv ? `https://arxiv.org/pdf/${p.arxiv}` : /\.pdf($|\?)/i.test(p.pdf ?? "") ? p.pdf : null;
   const stats = [
-    p.citations != null && link(`${p.url}#citing-papers`, `Cited by ${nf.format(p.citations)}`, "Papers citing this one, on Semantic Scholar"),
+    p.citations != null &&
+      (p.citationsUrl
+        ? link(p.citationsUrl, `Cited by ${nf.format(p.citations)}`, `Papers citing this one, on ${p.source}`)
+        : h("span", {}, `Cited by ${nf.format(p.citations)}`)),
     p.influential ? h("span", { title: "Citations Semantic Scholar rates as influential" }, `${nf.format(p.influential)} influential`) : null,
     p.references != null && h("span", {}, `${nf.format(p.references)} references`),
   ].filter(Boolean);
   return h(
     "div",
     { class: "qa-paper" },
-    h("h3", { class: "qa-paper-title" }, link(p.url, p.title, "Open on Semantic Scholar")),
+    h("h3", { class: "qa-paper-title" }, link(p.url, p.title, `Open on ${p.source}`)),
     authors.length ? h("p", { class: "qa-paper-authors" }, authors.join(", ")) : null,
     venue ? h("p", { class: "qa-paper-venue" }, venue) : null,
     stats.length ? h("p", { class: "qa-paper-stats" }, stats.flatMap((s, i) => (i ? [" · ", s] : [s]))) : null,
@@ -285,7 +327,7 @@ function paperDetails(p) {
       "div",
       { class: "qa-pop-links" },
       link(scholarSearch(p.title), "Google Scholar"),
-      link(p.url, "Semantic Scholar"),
+      p.source === "Crossref" ? null : link(p.url, p.source), // a Crossref result's page is its DOI
       p.arxiv ? link(`https://arxiv.org/abs/${p.arxiv}`, "arXiv") : null,
       p.doi ? link(`https://doi.org/${p.doi}`, "DOI") : null,
       p.pdf ? link(p.pdf, "PDF") : null,
@@ -294,7 +336,7 @@ function paperDetails(p) {
         ? h("button", { class: "qa-link", type: "button", onclick: (e) => copy(e.currentTarget, p.bibtex, "Copy BibTeX") }, "Copy BibTeX")
         : null,
     ),
-    h("p", { class: "qa-pop-source" }, "Data from Semantic Scholar"),
+    h("p", { class: "qa-pop-source" }, `Data from ${p.source}`),
   );
 }
 

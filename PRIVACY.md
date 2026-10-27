@@ -2,7 +2,7 @@
 
 _Last updated: 27 October 2026_
 
-Paper Q&A is a Chrome extension that lets you ask questions about a PDF and highlights the answers. This policy explains what data it handles. The short version: the extension has no server of its own and collects no analytics. It sends the paper's text and your questions only to Anthropic's API, and only when you press **Find answers**. When you click a citation or the paper info button, it looks that one paper up on Semantic Scholar.
+Paper Q&A is a Chrome extension that lets you ask questions about a PDF and highlights the answers. This policy explains what data it handles. The short version: the extension has no server of its own and collects no analytics. It sends the paper's text and your questions only to Anthropic's API, and only when you press **Find answers**. When you point at or click a citation, or click the paper info button, it looks that one paper up in public scholarly databases (Semantic Scholar, Crossref, OpenAlex and arXiv).
 
 ## What the extension stores on your computer
 
@@ -26,7 +26,14 @@ If you tick **Search the web** for a question, Claude may also search the web fo
 
 Anthropic processes this data under its own terms and privacy policy, which apply to your API account: <https://www.anthropic.com/legal/privacy>. Paper Q&A is an independent project and is not affiliated with or endorsed by Anthropic.
 
-When you click a citation in the paper, or the paper info button in the viewer's toolbar, the extension asks the Semantic Scholar API (`https://api.semanticscholar.org`, run by the Allen Institute for AI) for that paper's details. The request contains the paper's identifier (DOI, arXiv or ACL Anthology ID) if one is known, otherwise its title. The title comes from the clicked reference, or from the open PDF's metadata or first page. If you added a Semantic Scholar API key, it is sent with the request. Nothing is sent until you click, and no PDF text other than that title or identifier is sent. Semantic Scholar's terms and privacy policy apply: <https://www.semanticscholar.org/product/api/license> and <https://allenai.org/privacy-policy>. You can turn citation previews off on the options page. Links in the card (Google Scholar, arXiv, DOI and so on) are opened only if you click them.
+When you point at or click a citation in the paper, or click the paper info button in the viewer's toolbar, the extension looks up that paper's details. The requests go to these public services:
+
+- the Semantic Scholar API (`https://api.semanticscholar.org`, run by the Allen Institute for AI): the paper's identifier or title, plus your Semantic Scholar API key if you added one;
+- the Crossref API (`https://api.crossref.org`): the text of the clicked bibliography entry (authors, title, venue, year), or the paper's title;
+- the arXiv API (`https://export.arxiv.org`): the paper's title;
+- the OpenAlex API (`https://api.openalex.org`): the paper's DOI.
+
+The identifier is a DOI, or an arXiv or ACL Anthology ID. The title comes from the bibliography entry, or from the open PDF's metadata or first page. No other text from the PDF is sent, and nothing is sent unless you point at a citation, click one, or click the info button. These services' own terms apply: [Semantic Scholar](https://www.semanticscholar.org/product/api/license), [Crossref](https://www.crossref.org/documentation/retrieve-metadata/rest-api/), [arXiv](https://info.arxiv.org/help/api/tou.html) and [OpenAlex](https://openalex.org). The papers found are cached on your device for a week; **Clear cache** on the options page removes them. You can turn citation previews off on the options page. Links in the card (Google Scholar, arXiv, DOI and so on) are opened only if you click them.
 
 The extension also downloads the PDF you choose to open, from the web address it was opened from. This is the same request your browser would make to display it.
 

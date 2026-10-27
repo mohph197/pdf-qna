@@ -60,18 +60,19 @@
           Show a preview of the cited paper when I click a citation
         </label>
         <p class="hint">
-          Clicking a citation, or the toolbar's paper info button, looks the paper up on
-          <a href="https://www.semanticscholar.org" target="_blank" rel="noreferrer">Semantic Scholar</a>: its title, authors,
-          venue, citation count, summary and links. Only the paper's title or identifiers (DOI, arXiv ID) are sent, and only
-          when you click. With previews off, citations jump to the reference list as usual.
+          Clicking a citation, or the toolbar's paper info button, looks the paper up for its title, authors, venue, citation
+          count, summary and links. Semantic Scholar, Crossref, OpenAlex and arXiv are asked at once and the first match is
+          shown. Only the reference text, the paper's title or its identifiers (DOI, arXiv ID) are sent, and only when you
+          point at or click a citation. Found papers are kept with the cached answers. With previews off, citations jump to
+          the reference list as usual.
         </p>
         <label for="s2ApiKey">Semantic Scholar API key (optional)</label>
         <div class="row">
           <input id="s2ApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Not needed; avoids busy-time limits" />
         </div>
         <p class="hint">
-          Without a key, lookups share Semantic Scholar's public rate limit and can fail when it is busy. A free key gives you
-          your own limit: <a href="https://www.semanticscholar.org/product/api#api-key-form" target="_blank" rel="noreferrer">request one</a>.
+          Without a key, Semantic Scholar's public rate limit is often used up, and lookups then use Crossref, OpenAlex and
+          arXiv instead, which have no TL;DR summaries. A free key gives you your own limit: <a href="https://www.semanticscholar.org/product/api#api-key-form" target="_blank" rel="noreferrer">request one</a>.
           It is stored only in this browser and sent only to api.semanticscholar.org.
         </p>
       </section>
