@@ -4,11 +4,16 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    commit-message:
+      prefix: ci
 
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: monthly
+    commit-message:
+      prefix: chore
+      include: scope
     ignore:
       # Must stay in lockstep with the vendored viewer; upgrade with scripts/vendor.sh.
       - dependency-name: pdfjs-dist

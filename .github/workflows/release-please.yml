@@ -1,0 +1,54 @@
+name: Release Please
+
+# Keeps a "release PR" open that bumps the version in package.json,
+# package-lock.json and manifest.json and updates CHANGELOG.md from the
+# conventional-commit titles merged into main (feat: → minor, fix: → patch,
+# feat!: → major). Merging that PR tags the release, creates the GitHub
+# release, and runs release.yml to test, package and publish it.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: write
+    outputs:
+      release_created: ${{ steps.rp.outputs.release_created }}
+      tag_name: ${{ steps.rp.outputs.tag_name }}
+    steps:
+      - id: rp
+        uses: googleapis/release-please-action@v5
+
+      # Pull requests opened with the default GITHUB_TOKEN don't trigger other
+      # workflows, so the required CI check would never run on the release
+      # PR. Dispatched runs are allowed, so start CI on the PR branch directly.
+      - name: Run CI on the release PR
+        if: steps.rp.outputs.prs_created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ fromJSON(steps.rp.outputs.pr).headBranchName }}
+        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+
+  publish:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}
+    secrets: inherit

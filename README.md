@@ -118,17 +118,24 @@ npm run package     # dist/paper-qa-<version>.zip
 
 CI (`.github/workflows/ci.yml`) runs all of this on every push and pull request. It runs the end-to-end test against the built store package and uploads that package as an artifact.
 
-## Releasing
+## Contributing and releasing
 
-1. Bump `version` in both `manifest.json` and `package.json`, and add a section to `CHANGELOG.md`.
-2. Commit, then tag and push:
+`main` is protected: changes go through pull requests, which need the **Check, test and package** CI job to pass before they can be merged. PRs are squash-merged, so **the PR title becomes the commit message** and must follow [Conventional Commits](https://www.conventionalcommits.org/). A check enforces this:
 
-   ```sh
-   git tag v1.0.1 && git push origin main v1.0.1
-   ```
+| PR title | Effect on the next release |
+| --- | --- |
+| `fix: …` / `fix(matcher): …` | patch (1.0.0 → 1.0.1) |
+| `feat: …` | minor (1.0.0 → 1.1.0) |
+| `feat!: …`, or a `BREAKING CHANGE:` footer | major (1.0.0 → 2.0.0) |
+| `docs:`, `chore:`, `ci:`, `test:`, `refactor:` | no release on their own |
 
-3. The **Release** workflow runs the tests, builds the package, and creates a GitHub release with the zip and the changelog section as notes.
-4. If Chrome Web Store publishing is set up (see below), the workflow then uploads the package to the store and submits it for review.
+Releases are automated with [release-please](https://github.com/googleapis/release-please-action):
+
+1. After a `feat:` or `fix:` PR is merged, release-please opens (or updates) a PR titled **chore: release X.Y.Z**. It bumps the version in `manifest.json`, `package.json` and `package-lock.json` and adds the changes to `CHANGELOG.md`.
+2. Leave that PR open while more changes land; it keeps itself up to date. When you want to ship, merge it.
+3. Merging it creates the `vX.Y.Z` tag and GitHub release, then runs the **Release** workflow. That workflow tests the build, attaches `paper-qa-X.Y.Z.zip` to the release and, if set up, publishes to the Chrome Web Store.
+
+For a one-off manual release, you can still bump the versions yourself and push a `vX.Y.Z` tag.
 
 ### Chrome Web Store publishing setup (one time)
 
