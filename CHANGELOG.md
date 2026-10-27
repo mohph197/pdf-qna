@@ -2,6 +2,13 @@
 
 All notable changes to Paper Q&A are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.1.0](https://github.com/mohph197/pdf-qna/compare/v1.0.0...v1.1.0) (2026-10-27)
+
+
+### Features
+
+* **sidebar:** Markdown export, optional web search and free-form answers ([#8](https://github.com/mohph197/pdf-qna/issues/8)) ([1cd700f](https://github.com/mohph197/pdf-qna/commit/1cd700fe595f9c7606dc611e41b40cd719326692))
+
 ## [1.0.0] - 2026-10-27
 
 First public release.
