@@ -32,7 +32,7 @@ jobs:
         run: npm run check
 
       - name: Cache arXiv test papers
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: tests/papers
           key: arxiv-papers-${{ hashFiles('scripts/fetch-test-papers.sh') }}
