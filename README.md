@@ -10,6 +10,7 @@ A Chrome extension (Manifest V3) for asking Claude questions about a research-pa
 - A sidebar shows your questions, Claude's short answers and 1–3 quotes per answer. Click a quote to scroll to its highlight and flash it.
 - Quotes are matched to the text layer by a matcher that tolerates hyphenation, ligatures, smart quotes, dashes, line breaks, page breaks and small wording differences. Approximate and low-confidence matches are labeled in the sidebar.
 - **Export annotated PDF** saves a copy with the highlights written in as real PDF Highlight annotations, so they show in Acrobat, Preview, Chrome and other readers.
+- **Export Markdown** saves the questions, answers and quotes, with page numbers and match notes, as a `.md` file for your notes.
 - Results are cached per file (by SHA-256 hash). Reopening a paper restores its questions and highlights without a new API call.
 
 ![Paper Q&A answering questions about the ResNet paper](store/screenshot-2-answers.png)
@@ -65,6 +66,7 @@ lib/matcher.js                 quote matcher (pure ES module, also runs in Node)
 src/viewer/boot.mjs            runs before pdf.js to take over document loading
 src/viewer/qa.mjs, qa.css      sidebar, highlighting, cache, export trigger
 src/viewer/export.js           writes /Highlight annotations with pdf-lib
+src/viewer/markdown.js         renders questions, answers and quotes as Markdown
 options/                       settings page
 vendor/pdfjs/, vendor/pdf-lib/ pinned upstream builds (pdf.js 6.4.299, pdf-lib 1.17.1)
 scripts/vendor.sh              re-downloads vendor/ and patches viewer.html (one command)
@@ -113,7 +115,7 @@ npm run package     # dist/paper-qa-<version>.zip
 
 - `npm run check` runs static checks: JS syntax, manifest and package versions match, every referenced file exists, and the vendored viewer is patched.
 - `npm run test:matcher` runs the matcher stress test (it downloads three arXiv papers). It cuts random passages out of each paper's text layer, distorts them the way model quotes tend to differ (typography changes, extra line breaks, dropped citations, `...` elisions, a few changed or deleted words, passages crossing a page break), and checks that the highlight lands on the original characters. Current results on ResNet (1512.03385), BERT (1810.04805) and GPT-3 (2005.14165): 1250/1260 passages found. All of the misses are in tables of contents, tables or figure labels, where the text is mostly dot leaders or repeated tokens. Text that doesn't occur in the paper is correctly reported as not found.
-- `npm run test:e2e` loads the extension into headless Chrome with a mocked Claude API and checks the whole flow: answering, highlights, quote navigation, zoom, cache restore, export, local files and the open-PDF banner. Set `CHROME_PATH` if Chrome isn't in a standard location, and `EXTENSION_DIR` to test an unzipped package.
+- `npm run test:e2e` loads the extension into headless Chrome with a mocked Claude API and checks the whole flow: answering, highlights, quote navigation, zoom, cache restore, PDF and Markdown export, local files and the open-PDF banner. Set `CHROME_PATH` if Chrome isn't in a standard location, and `EXTENSION_DIR` to test an unzipped package.
 - `npm run store-assets` regenerates the icons, store screenshots and promo tiles.
 
 CI (`.github/workflows/ci.yml`) runs all of this on every push and pull request. It runs the end-to-end test against the built store package and uploads that package as an artifact.

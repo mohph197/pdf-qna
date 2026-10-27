@@ -4,6 +4,7 @@
 import { buildIndex, matchQuote, pageText } from "../../lib/matcher.js";
 import { getSettings, modelInfo } from "../../shared/models.js";
 import { exportAnnotated } from "./export.js";
+import { answersToMarkdown } from "./markdown.js";
 
 const app = window.PDFViewerApplication;
 
@@ -62,6 +63,11 @@ function buildSidebar() {
   ui.ask = h("button", { class: "qa-btn qa-primary", type: "button", onclick: () => ask(false) }, "Find answers");
   ui.list = h("div", { class: "qa-list" });
   ui.export = h("button", { class: "qa-btn", type: "button", onclick: doExport }, "Export annotated PDF");
+  ui.markdown = h(
+    "button",
+    { class: "qa-btn", type: "button", onclick: doExportMarkdown, title: "Questions, answers and quotes with page numbers" },
+    "Export Markdown",
+  );
   ui.reask = h("button", { class: "qa-btn", type: "button", onclick: () => ask(true) }, "Re-ask all");
   ui.clear = h("button", { class: "qa-btn qa-danger", type: "button", onclick: clearAll }, "Clear");
 
@@ -83,7 +89,7 @@ function buildSidebar() {
     ui.error,
     h("div", { class: "qa-compose" }, ui.input, h("div", { class: "qa-row" }, ui.add, ui.ask)),
     ui.list,
-    h("footer", { class: "qa-footer" }, ui.export, ui.reask, ui.clear),
+    h("footer", { class: "qa-footer" }, ui.export, ui.markdown, ui.reask, ui.clear),
   );
   ui.reopen = h(
     "button",
@@ -151,6 +157,7 @@ function render() {
   ui.ask.textContent = state.pending.size ? "Asking…" : `Find answers${unanswered.length > 1 ? ` (${unanswered.length})` : ""}`;
   ui.reask.disabled = !hasDoc || state.questions.length === 0 || state.pending.size > 0;
   ui.export.disabled = !hasDoc || Object.keys(state.matches).length === 0;
+  ui.markdown.disabled = !hasDoc || Object.keys(state.results).length === 0;
   ui.clear.disabled = state.questions.length === 0 || state.pending.size > 0;
 
   ui.list.replaceChildren(
@@ -626,12 +633,7 @@ async function doExport() {
       });
     });
     const out = await exportAnnotated(state.doc.bytes, state.doc.pages, highlights);
-    const url = URL.createObjectURL(new Blob([out], { type: "application/pdf" }));
-    const a = h("a", { href: url, download: state.doc.name.replace(/\.pdf$/i, "") + "-annotated.pdf" });
-    document.body.append(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    download(new Blob([out], { type: "application/pdf" }), "-annotated.pdf");
     setStatus(before);
   } catch (e) {
     setStatus(before);
@@ -639,6 +641,26 @@ async function doExport() {
   } finally {
     render();
   }
+}
+
+function doExportMarkdown() {
+  if (!state.doc) return;
+  const md = answersToMarkdown({
+    name: state.doc.name,
+    questions: state.questions,
+    results: state.results,
+    matches: state.matches,
+  });
+  download(new Blob([md], { type: "text/markdown;charset=utf-8" }), "-answers.md");
+}
+
+function download(blob, suffix) {
+  const url = URL.createObjectURL(blob);
+  const a = h("a", { href: url, download: state.doc.name.replace(/\.pdf$/i, "") + suffix });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 // ---------------------------------------------------------------------------

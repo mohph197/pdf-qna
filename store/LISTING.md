@@ -25,6 +25,8 @@ BUILT FOR REAL PAPERS
 • Quotes are located even across two-column layouts, hyphenated line breaks, ligatures, page breaks and dropped citation numbers.
 • Approximate and low-confidence matches are clearly labeled.
 • Export a copy of the PDF with the highlights saved as real PDF annotations, visible in Acrobat, Preview and any other reader.
+
+• Export the questions, answers and quotes, with page numbers, as a Markdown file for your notes.
 • Answers are cached per file, so reopening a paper brings its highlights back instantly at no extra cost.
 • Works with local files too (enable "Allow access to file URLs").
 

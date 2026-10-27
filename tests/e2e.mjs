@@ -250,6 +250,25 @@ try {
     assert.equal(await page.$eval(".qa-error", (e) => e.hidden), true);
   });
 
+  await step("Markdown export lists answers with quotes and pages", async () => {
+    await page.evaluate(() => {
+      window.__markdown = null;
+      const orig = URL.createObjectURL;
+      URL.createObjectURL = (blob) => {
+        if (blob.type.startsWith("text/markdown")) blob.text().then((t) => (window.__markdown = t));
+        return orig(blob);
+      };
+    });
+    await page.click(".qa-footer .qa-btn:nth-child(2)");
+    await page.waitForFunction(() => window.__markdown, { timeout: 10000 });
+    const md = await page.evaluate(() => window.__markdown);
+    assert.match(md, /^# .+\.pdf\n/);
+    assert.match(md, /## 2\. What error does the ensemble reach\?\n\nAn ensemble of residual nets reaches 3\.57% error/);
+    assert.match(md, /> “An ensemble of these residual nets achieves 3\.57% error on the ImageNet test set\.”\n>\n> — p\. 1\n/);
+    assert.match(md, /## 4\. How much energy does training use\?\n\n\*\*Not answered in the paper\.\*\*/);
+    assert.match(md, /— p\. 6 _\(not found in the PDF text\)_/);
+  });
+
   await step("local file:// PDFs load (with file access allowed)", async () => {
     await page.goto(`${viewer}?src=${encodeURIComponent(`file://${PAPER}`)}`);
     await page.waitForFunction(() => /12 pages|Couldn't/.test(document.body.textContent), { timeout: 30000 });
