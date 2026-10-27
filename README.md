@@ -13,6 +13,9 @@ A Chrome extension (Manifest V3) for asking Claude questions about a research-pa
 - Tick **Free-form answer** for requests that don't fit a short quoted answer, such as "list every dataset as a Markdown table" or "extract the hyperparameters as JSON". The whole input box becomes one request, Claude answers in the format you ask for, and quotes become optional (it still adds them where they directly support the answer). Free-form answers keep their line breaks and have a **Copy answer** button.
 - **Export annotated PDF** saves a copy with the highlights written in as real PDF Highlight annotations, so they show in Acrobat, Preview, Chrome and other readers.
 - **Export Markdown** saves the questions, answers and quotes, with page numbers and match notes, as a `.md` file for your notes.
+- **Citation previews.** Click a citation such as `[41]` or `(Peters et al., 2018)` and a card shows the cited paper instead of jumping to the reference list: title, authors, venue and year, citation count, a one-sentence summary, the abstract, and links to Google Scholar, Semantic Scholar, arXiv, the DOI and the PDF. **Open in Paper Q&A** opens the cited paper in a new tab. **Go to reference** still jumps to the bibliography entry, and Ctrl/⌘-click keeps the old behavior.
+- **Paper info.** The ⓘ button in the viewer's toolbar shows the same card for the open paper, with a **Copy BibTeX** button.
+- **Default PDF viewer.** Set "When a PDF opens" to **Always** (or click **Always** on the banner) and PDFs open straight in Paper Q&A, including local files. The address bar shows the PDF's own URL, as `chrome-extension://<id>/https://arxiv.org/pdf/…`, so you can still read, copy and reload it.
 - Results are cached per file (by SHA-256 hash). Reopening a paper restores its questions and highlights without a new API call.
 
 ![Paper Q&A answering questions about the ResNet paper](store/screenshot-2-answers.png)
@@ -41,7 +44,8 @@ Paper Q&A is an independent project and is not affiliated with or endorsed by An
    - `claude-sonnet-5-5`: faster and cheaper.
    - `claude-haiku-5-5`: fastest and cheapest.
    - `claude-fable-5-1`: most capable, most expensive.
-4. Optionally set **Effort** (default: medium) and choose what happens when a PDF opens: offer, always open, or do nothing.
+4. Optionally set **Effort** (default: medium) and choose what happens when a PDF opens: offer, always open (Paper Q&A becomes Chrome's PDF viewer), or do nothing.
+5. Optionally paste a free [Semantic Scholar API key](https://www.semanticscholar.org/product/api#api-key-form) for citation previews and paper info. They work without one, but keyless requests share a public rate limit and can fail at busy times.
 
 A typical 10–15 page paper is around 15–20k tokens, which is a few cents per question batch with Opus 5.5. The sidebar shows an estimate for each paper. The paper text is sent with prompt caching, so follow-up questions on the same paper within a few minutes cost much less.
 
@@ -49,6 +53,7 @@ A typical 10–15 page paper is around 15–20k tokens, which is a few cents per
 
 - Open any PDF in Chrome. Paper Q&A detects it by URL or by `Content-Type: application/pdf`, so `arxiv.org/pdf/…` URLs work. It then shows an **Open in Paper Q&A** banner (or a notification if the banner can't be shown) and a "Q&A" badge on the toolbar icon. Clicking the toolbar icon also opens the current PDF.
 - You can also right-click a link and choose **Open PDF in Paper Q&A**.
+- Click a citation in the paper to preview the cited paper, or the ⓘ toolbar button for the open paper. Esc or a click elsewhere closes the card. Turn previews off on the options page to make citations jump to the reference list again.
 - Type one or more questions, one per line, and press **Add** (⌘/Ctrl+Enter). Then press **Find answers**. Only unanswered questions are sent. **Re-ask all** sends them all again.
 - Questions added with **Search the web** ticked are tagged "web". Claude may run up to 5 searches per request for them, billed by Anthropic at $10 per 1,000 searches on top of tokens. Your organization's admin can turn web search off in the Claude Console; the sidebar then explains the error.
 - Quote badges in the sidebar:
@@ -63,18 +68,23 @@ A typical 10–15 page paper is around 15–20k tokens, which is a few cents per
 manifest.json
 background/service-worker.js   PDF detection, offer banner, context menu, message routing
 background/claude.js           Messages API client: streaming, retries, error mapping
+background/scholar.js          Semantic Scholar client for citation previews and paper info
 shared/models.js               model list, defaults, settings
 shared/prompt.js               system prompt, JSON schema, response validator
 lib/matcher.js                 quote matcher (pure ES module, also runs in Node)
+lib/references.js              finds a citation's bibliography entry and the open paper's identity
 src/viewer/boot.mjs            runs before pdf.js to take over document loading
 src/viewer/qa.mjs, qa.css      sidebar, highlighting, cache, export trigger
+src/viewer/papers.mjs          citation preview cards and the toolbar's paper info button
+src/viewer/dom.js              h(), the small DOM helper the viewer builds its UI with
 src/viewer/export.js           writes /Highlight annotations with pdf-lib
 src/viewer/markdown.js         renders questions, answers and quotes as Markdown
 options/                       settings page
 vendor/pdfjs/, vendor/pdf-lib/ pinned upstream builds (pdf.js 6.4.299, pdf-lib 1.17.1)
 scripts/vendor.sh              re-downloads vendor/ and patches viewer.html (one command)
 tests/matcher-test.mjs         matcher stress test on real arXiv PDFs
-tests/e2e.mjs                  end-to-end test in headless Chrome (mocked API)
+tests/references-test.mjs      citation-to-reference test on real arXiv PDFs
+tests/e2e.mjs                  end-to-end test in headless Chrome (mocked APIs)
 scripts/package.sh             builds dist/paper-qa-<version>.zip for the store
 scripts/cws-publish.mjs        uploads a package to the Chrome Web Store (used by CI)
 store/                         store listing text, screenshots and promo images
@@ -107,6 +117,10 @@ Questions with **Free-form answer** on are marked `[free-form]`: their `answer` 
 
 The matched key range is mapped back to `(page, item, start, end)` segments. When pdf.js renders a page's text layer (on scroll or zoom), the affected spans are split and the matched characters are wrapped in colored `<span>`s. Highlights are reapplied every time a page re-renders.
 
+**Citation previews and paper info.** A click on an internal link is caught before pdf.js follows it. The link's destination is resolved to a page and position. If it is a citation, the bibliography entry is read from the text items below that position, up to where the next entry starts. A citation is a hyperref `cite.*` destination, or a target after the "References" heading that looks like an entry. Entries are recognized by labels like `[12]`, by hanging indents, and by entries that continue in the next column or on the next page. From the entry's text the viewer takes a DOI, an arXiv ID or a title guess: the first sentence after the author list, skipping a year, or a quoted title. The service worker looks it up with the [Semantic Scholar Academic Graph API](https://api.semanticscholar.org/api-docs/graph): `GET /paper/DOI:…` or `/paper/ARXIV:…`, otherwise `/paper/search/match?query=<title>`. A title match is accepted only if at least 80% of its words occur in the entry. The open paper is identified from its URL (arXiv, ACL Anthology, DOI), the arXiv stamp or a DOI on page 1, the PDF's title metadata, or the largest text on page 1. Lookups are made only when you click. Requests that get a 429 or 5xx are retried twice. Results are kept for the session.
+
+**Readable URLs and the default viewer.** The viewer opens as `viewer.html?src=<PDF URL>` and then uses `history.replaceState` to change its address to `chrome-extension://<id>/<PDF URL>`. When that address is loaded again (reload, history, a copied link), the service worker's `fetch` handler redirects it to the viewer. If a hard reload bypasses the service worker, a tab listener catches the resulting error page. `boot.mjs` turns pdf.js's relative resource paths (worker, fonts, CMaps) into absolute ones so they don't follow the changed address. In **Always** mode, the `webRequest` listener that recognizes PDFs also sends the tab to the viewer as soon as the response headers arrive, before Chrome's viewer shows the file. Local PDFs are caught when their tab starts loading. The tab remembers the PDF it last opened this way, so going Back to it shows the PDF instead of reopening the viewer.
+
 ## Development and tests
 
 Node 20+ and Chrome are needed. npm is only used for dev tooling.
@@ -119,7 +133,8 @@ npm run package     # dist/paper-qa-<version>.zip
 
 - `npm run check` runs static checks: JS syntax, manifest and package versions match, every referenced file exists, and the vendored viewer is patched.
 - `npm run test:matcher` runs the matcher stress test (it downloads three arXiv papers). It cuts random passages out of each paper's text layer, distorts them the way model quotes tend to differ (typography changes, extra line breaks, dropped citations, `...` elisions, a few changed or deleted words, passages crossing a page break), and checks that the highlight lands on the original characters. Current results on ResNet (1512.03385), BERT (1810.04805) and GPT-3 (2005.14165): 1250/1260 passages found. All of the misses are in tables of contents, tables or figure labels, where the text is mostly dot leaders or repeated tokens. Text that doesn't occur in the paper is correctly reported as not found.
-- `npm run test:e2e` loads the extension into headless Chrome with a mocked Claude API and checks the whole flow: answering, highlights, quote navigation, zoom, cache restore, PDF and Markdown export, local files and the open-PDF banner. Set `CHROME_PATH` if Chrome isn't in a standard location, and `EXTENSION_DIR` to test an unzipped package.
+- `npm run test:references` checks reference parsing and paper IDs with unit cases, then follows every citation link in the three test papers (250 citations). Each one must lead to its whole bibliography entry and nothing more, and must yield a DOI, arXiv ID or title.
+- `npm run test:e2e` loads the extension into headless Chrome with mocked Claude and Semantic Scholar APIs and checks the whole flow: answering, highlights, quote navigation, zoom, cache restore, PDF and Markdown export, local files, the open-PDF banner, readable URLs (including a reload), "always open" mode, the paper info card and citation previews. Set `CHROME_PATH` if Chrome isn't in a standard location, and `EXTENSION_DIR` to test an unzipped package.
 - `npm run store-assets` regenerates the icons, store screenshots and promo tiles.
 
 CI (`.github/workflows/ci.yml`) runs all of this on every push and pull request. It runs the end-to-end test against the built store package and uploads that package as an artifact.
@@ -167,6 +182,9 @@ To let CI publish later versions:
 - Encrypted PDFs can be viewed and questioned, but not exported with annotations.
 - Papers longer than the selected model's context window (about 900k tokens for the 1M-token models) are rejected with an error instead of being truncated.
 - The cache lives in `chrome.storage.local` on this machine only. Clear it on the options page.
+- Citation previews need linked citations, which LaTeX papers built with `hyperref` (most of arXiv) and many publisher PDFs have. Citations that are plain text, with no link, can't be clicked.
+- Paper data comes from Semantic Scholar, not Google Scholar, which has no public API. Each card links to a Google Scholar search for the paper. Without a Semantic Scholar API key, lookups share a public rate limit and may ask you to retry.
+- An extension page can't show another site's address as its own, so the address bar shows `chrome-extension://<id>/` followed by the PDF's URL.
 
 ## Updating the bundled libraries
 

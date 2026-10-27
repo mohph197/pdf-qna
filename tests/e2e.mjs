@@ -1,7 +1,8 @@
 // End-to-end test: loads the unpacked extension into headless Chrome, opens
 // a real paper, answers questions with a mocked Claude API, and checks
-// highlights, quote navigation, zoom, cache restore, local files and the
-// "open in Paper Q&A" offer.
+// highlights, quote navigation, zoom, cache restore, local files, the
+// "open in Paper Q&A" offer, readable viewer URLs, "always open" mode, and
+// citation previews and paper info with a mocked Semantic Scholar API.
 //
 //   npm run test:e2e
 //   CHROME_PATH=/path/to/chrome npm run test:e2e
@@ -165,6 +166,42 @@ const freeformReply = toSse([
   ),
 ]);
 
+// Mocked Semantic Scholar papers: the open paper (found by the arXiv stamp on
+// its first page) and one cited paper (found by the title in its reference).
+const S2_PAPERS = {
+  "/graph/v1/paper/ARXIV:1512.03385": {
+    paperId: "2c03df8b48bf3fa39054345bafabfeff15bfd11d",
+    title: "Deep Residual Learning for Image Recognition",
+    url: "https://www.semanticscholar.org/paper/2c03df8b48bf3fa39054345bafabfeff15bfd11d",
+    authors: [{ name: "Kaiming He" }, { name: "X. Zhang" }, { name: "Shaoqing Ren" }, { name: "Jian Sun" }],
+    venue: "Computer Vision and Pattern Recognition",
+    publicationVenue: { name: "Computer Vision and Pattern Recognition", alternate_names: ["CVPR"] },
+    year: 2015,
+    citationCount: 243353,
+    influentialCitationCount: 33155,
+    referenceCount: 54,
+    tldr: { text: "This work presents a residual learning framework." },
+    abstract: "Deeper neural networks are more difficult to train.",
+    externalIds: { ArXiv: "1512.03385", DOI: "10.1109/cvpr.2016.90" },
+    citationStyles: { bibtex: "@inproceedings{He2015DeepRL}" },
+  },
+  "/graph/v1/paper/search/match": {
+    data: [
+      {
+        paperId: "eb42cf88027de515750f230b23b1a057dc782108",
+        title: "Very Deep Convolutional Networks for Large-Scale Image Recognition",
+        url: "https://www.semanticscholar.org/paper/eb42cf88027de515750f230b23b1a057dc782108",
+        authors: [{ name: "K. Simonyan" }, { name: "Andrew Zisserman" }],
+        venue: "International Conference on Learning Representations",
+        year: 2014,
+        citationCount: 104000,
+        externalIds: { ArXiv: "1409.1556" },
+        matchScore: 140,
+      },
+    ],
+  },
+};
+
 const server = createServer(async (req, res) => {
   res.writeHead(200, { "content-type": "application/pdf" });
   res.end(await readFile(PAPER));
@@ -199,7 +236,20 @@ try {
   const swTarget = await browser.waitForTarget((t) => t.type() === "service_worker" && t.url().includes(id));
   const cdp = (await swTarget.worker()).client;
   const apiCalls = [];
+  const s2Calls = [];
   cdp.on("Fetch.requestPaused", async (ev) => {
+    if (ev.request.url.startsWith("https://api.semanticscholar.org/")) {
+      const url = new URL(ev.request.url);
+      s2Calls.push(url);
+      const paper = S2_PAPERS[decodeURIComponent(url.pathname)];
+      await cdp.send("Fetch.fulfillRequest", {
+        requestId: ev.requestId,
+        responseCode: paper ? 200 : 404,
+        responseHeaders: [{ name: "content-type", value: "application/json" }],
+        body: Buffer.from(JSON.stringify(paper ?? { error: "Paper not found" })).toString("base64"),
+      });
+      return;
+    }
     const body = JSON.parse(ev.request.postData ?? "{}");
     apiCalls.push({ headers: ev.request.headers, body });
     const resumed = body.messages.at(-1).role === "assistant";
@@ -215,7 +265,9 @@ try {
       body: Buffer.from(reply).toString("base64"),
     });
   });
-  await cdp.send("Fetch.enable", { patterns: [{ urlPattern: "https://api.anthropic.com/*" }] });
+  await cdp.send("Fetch.enable", {
+    patterns: [{ urlPattern: "https://api.anthropic.com/*" }, { urlPattern: "https://api.semanticscholar.org/*" }],
+  });
 
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 800 });
@@ -233,13 +285,60 @@ try {
     await page.click("#save");
     await page.waitForFunction(() => document.querySelector("#saved").textContent === "Saved.");
     assert.equal(await page.$eval("#model", (e) => e.value), "claude-opus-5-5");
-    if (SHOTS) await page.screenshot({ path: join(SHOTS, "screenshot-4-options.png") });
+    if (SHOTS) {
+      await page.evaluate(() => scrollTo(0, 0));
+      await page.screenshot({ path: join(SHOTS, "screenshot-4-options.png") });
+    }
   });
 
   await step("viewer loads a web PDF and reads its text", async () => {
     await page.goto(`${viewer}?src=${encodeURIComponent(`${base}/resnet.pdf`)}`);
     await page.waitForFunction(() => /12 pages/.test(document.querySelector(".qa-status")?.textContent), { timeout: 30000 });
     assert.equal(await page.$eval(".qa-error", (e) => e.hidden), true, "unexpected error box");
+    // The address bar shows the PDF's own URL.
+    assert.equal(page.url(), `chrome-extension://${id}/${base}/resnet.pdf`);
+  });
+
+  await step("the paper info button shows the open paper from Semantic Scholar", async () => {
+    await page.click("#qaInfoButton");
+    await page.waitForSelector(".qa-pop .qa-paper-title", { timeout: 10000 });
+    const card = await page.$eval(".qa-pop", (e) => ({
+      title: e.querySelector(".qa-paper-title").textContent,
+      venue: e.querySelector(".qa-paper-venue").textContent,
+      stats: e.querySelector(".qa-paper-stats").textContent,
+      links: [...e.querySelectorAll(".qa-pop-links a")].map((a) => a.textContent),
+    }));
+    assert.deepEqual(card, {
+      title: "Deep Residual Learning for Image Recognition",
+      venue: "Computer Vision and Pattern Recognition (CVPR) · 2015",
+      stats: "Cited by 243,353 · 33,155 influential · 54 references",
+      links: ["Google Scholar", "Semantic Scholar", "arXiv", "DOI", "Open in Paper Q&A"],
+    });
+    assert.equal(decodeURIComponent(s2Calls.at(-1).pathname), "/graph/v1/paper/ARXIV:1512.03385");
+    await page.keyboard.press("Escape");
+    assert.equal(await page.$(".qa-pop"), null);
+  });
+
+  await step("clicking a citation previews the cited paper instead of jumping", async () => {
+    const before = await page.evaluate(() => PDFViewerApplication.page);
+    await page.waitForSelector('.annotationLayer [data-internal-link] a[href*="cite.Simonyan2015"]', { timeout: 10000 });
+    await page.$eval('.annotationLayer [data-internal-link] a[href*="cite.Simonyan2015"]', (a) => a.click());
+    await page.waitForSelector(".qa-pop .qa-paper-title", { timeout: 10000 });
+    const card = await page.$eval(".qa-pop", (e) => ({
+      title: e.querySelector(".qa-paper-title").textContent,
+      stats: e.querySelector(".qa-paper-stats").textContent,
+    }));
+    assert.deepEqual(card, { title: "Very Deep Convolutional Networks for Large-Scale Image Recognition", stats: "Cited by 104,000" });
+    const match = s2Calls.at(-1);
+    assert.equal(match.pathname, "/graph/v1/paper/search/match");
+    assert.equal(match.searchParams.get("query"), "Very deep convolutional networks for large-scale image recognition");
+    assert.equal(await page.evaluate(() => PDFViewerApplication.page), before, "the citation link navigated");
+    if (SHOTS) await page.screenshot({ path: join(SHOTS, "screenshot-5-citation.png") });
+    // "Go to reference" still takes you to the bibliography entry.
+    await page.click(".qa-pop-actions .qa-link");
+    await page.waitForFunction(() => PDFViewerApplication.page === 9, { timeout: 10000 });
+    assert.equal(await page.$(".qa-pop"), null);
+    await page.evaluate(() => (PDFViewerApplication.page = 1));
   });
 
   await step("questions are answered and highlighted", async () => {
@@ -294,10 +393,12 @@ try {
   });
 
   await step("reopening the PDF restores answers from cache without an API call", async () => {
+    // Reloading the readable URL goes through the service worker's router.
     await page.reload();
     await page.waitForFunction(() => document.querySelectorAll(".qa-hl").length > 0, { timeout: 30000 });
     assert.match(await status(), /restored from cache/);
     assert.equal(apiCalls.length, 1);
+    assert.equal(page.url(), `chrome-extension://${id}/${base}/resnet.pdf`);
   });
 
   await step("export produces a PDF", async () => {
@@ -393,7 +494,7 @@ try {
     // first one occasionally lands while the PDF is still loading.
     const ext = await browser.newPage();
     await ext.goto(`chrome-extension://${id}/options/options.html`);
-    const target = `${viewer}?src=${encodeURIComponent(`${base}/pdf/1512.03385`)}`;
+    const target = `chrome-extension://${id}/${base}/pdf/1512.03385`; // the viewer's readable URL
     const opened = () => ext.evaluate(async (url) => (await chrome.tabs.query({})).some((t) => t.url === url), target);
     for (let attempt = 0; attempt < 3 && !(await opened()); attempt++) {
       // Bounded: once the tab has navigated, puppeteer's handle can hang.
@@ -403,6 +504,28 @@ try {
     assert.ok(await opened(), "viewer tab was not opened");
     await ext.close();
     await Promise.race([tab.close().catch(() => {}), sleep(3000)]);
+  });
+
+  await step('"always open" mode opens PDFs in the viewer straight away', async () => {
+    const ext = await browser.newPage();
+    await ext.goto(`chrome-extension://${id}/options/options.html`);
+    await ext.evaluate(() => chrome.storage.local.set({ openMode: "always" }));
+    const pdfUrl = `${base}/pdf/2005.14165?always#page=2`;
+    const pretty = `chrome-extension://${id}/${pdfUrl}`;
+    const shown = () => ext.evaluate(async (url) => (await chrome.tabs.query({})).some((t) => t.url === url), pretty);
+    try {
+      // Opened by the extension page, so puppeteer never holds the tab.
+      await ext.evaluate((url) => chrome.tabs.create({ url, active: false }), pdfUrl);
+      for (let i = 0; i < 60 && !(await shown()); i++) await sleep(250);
+      assert.ok(await shown(), "the PDF was not opened in the viewer");
+    } finally {
+      await ext.evaluate(async (url) => {
+        await chrome.storage.local.set({ openMode: "ask" });
+        const tabs = await chrome.tabs.query({});
+        await chrome.tabs.remove(tabs.filter((t) => t.url === url).map((t) => t.id));
+      }, pretty);
+      await ext.close();
+    }
   });
 
   await step("no page errors", async () => assert.deepEqual(errors, []));

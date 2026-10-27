@@ -34,6 +34,8 @@ async function init() {
   $("apiKey").value = s.apiKey;
   $("effort").value = s.effort;
   $("openMode").value = s.openMode;
+  $("citationPreviews").checked = s.citationPreviews;
+  $("s2ApiKey").value = s.s2ApiKey;
   fillModels(MODELS, s.model);
   refreshCacheInfo();
   chrome.extension.isAllowedFileSchemeAccess((allowed) => {
@@ -74,6 +76,8 @@ $("save").addEventListener("click", async () => {
     model: $("model").value,
     effort: $("effort").value,
     openMode: $("openMode").value,
+    citationPreviews: $("citationPreviews").checked,
+    s2ApiKey: $("s2ApiKey").value.trim(),
   });
   $("saved").textContent = "Saved.";
   setTimeout(() => ($("saved").textContent = ""), 2000);

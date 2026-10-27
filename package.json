@@ -13,8 +13,9 @@
     "check": "node scripts/check.mjs",
     "papers": "./scripts/fetch-test-papers.sh",
     "test:matcher": "npm run papers && node tests/matcher-test.mjs tests/papers/*.pdf",
+    "test:references": "npm run papers && node tests/references-test.mjs tests/papers/*.pdf",
     "test:e2e": "npm run papers && node tests/e2e.mjs",
-    "test": "npm run check && npm run test:matcher && npm run test:e2e",
+    "test": "npm run check && npm run test:matcher && npm run test:references && npm run test:e2e",
     "package": "./scripts/package.sh",
     "store-assets": "npm run papers && node scripts/store-assets.mjs",
     "vendor": "./scripts/vendor.sh"

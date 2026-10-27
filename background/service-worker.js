@@ -2,11 +2,39 @@
 // API calls (the viewer page never sees the API key).
 
 import { ClaudeError, askPaper, listModels } from "./claude.js";
+import { ScholarError, lookupPaper } from "./scholar.js";
 import { getSettings } from "../shared/models.js";
 
+const BASE = chrome.runtime.getURL("");
 const VIEWER = chrome.runtime.getURL("vendor/pdfjs/web/viewer.html");
-const viewerUrl = (src) => (src ? `${VIEWER}?src=${encodeURIComponent(src)}` : VIEWER);
 const looksLikePdf = (url) => /^(https?|file):/i.test(url) && /\.pdf($|[?#])/i.test(url);
+
+// The PDF's own fragment ("#page=3") becomes the viewer's, which pdf.js reads.
+function viewerUrl(src) {
+  if (!src) return VIEWER;
+  const i = src.indexOf("#");
+  return i < 0 ? `${VIEWER}?src=${encodeURIComponent(src)}` : `${VIEWER}?src=${encodeURIComponent(src.slice(0, i))}${src.slice(i)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Readable viewer URLs
+//
+// Once a PDF is open, the viewer rewrites its address to
+// chrome-extension://<id>/https://example.com/paper.pdf, so the address bar
+// shows (and copies) the PDF's own URL. Loading such an address, after a
+// reload or from history, is routed back to the viewer here.
+
+function viewerForPrettyUrl(url) {
+  if (!url?.startsWith(BASE)) return null;
+  const src = url.slice(BASE.length);
+  return /^(https?|file):/i.test(src) ? viewerUrl(src) : null;
+}
+
+self.addEventListener("fetch", (event) => {
+  if (event.request.mode !== "navigate") return;
+  const target = viewerForPrettyUrl(event.request.url);
+  if (target) event.respondWith(Response.redirect(target));
+});
 
 // ---------------------------------------------------------------------------
 // PDF detection
@@ -22,6 +50,9 @@ chrome.webRequest.onHeadersReceived.addListener(
     const isPdf = type.includes("application/pdf") || (type.includes("octet-stream") && looksLikePdf(details.url));
     if (isPdf && !attachment) {
       chrome.storage.session.set({ [`pdf:${details.tabId}`]: details.url });
+      // Open it in the viewer before Chrome's own viewer shows it. A POST
+      // response can't be fetched again, so those stay in Chrome's viewer.
+      if (details.method === "GET") autoOpen(details.tabId, details.url);
     }
   },
   { urls: ["http://*/*", "https://*/*"], types: ["main_frame"] },
@@ -36,24 +67,50 @@ async function isPdfTab(tab) {
   return stored === tab.url;
 }
 
+// "Always open" mode makes Paper Q&A the default PDF viewer. The tab's last
+// automatically opened PDF is remembered so that going Back to it shows the
+// PDF itself instead of bouncing into the viewer again; the memory is cleared
+// once the tab goes elsewhere.
+async function autoOpen(tabId, url) {
+  const { openMode } = await getSettings();
+  if (openMode !== "always") return;
+  const key = `auto:${tabId}`;
+  if ((await chrome.storage.session.get(key))[key] === url) return;
+  await chrome.storage.session.set({ [key]: url });
+  chrome.tabs.update(tabId, { url: viewerUrl(url) }).catch(() => {});
+}
+
 chrome.tabs.onUpdated.addListener(async (tabId, change, tab) => {
+  if (change.url && !change.url.startsWith(BASE)) {
+    const key = `auto:${tabId}`;
+    const last = (await chrome.storage.session.get(key))[key];
+    if (last && last !== change.url) chrome.storage.session.remove(key);
+  }
+  // Local files send no response headers to watch, so catch them here.
+  if (change.status === "loading" && /^file:/i.test(tab.url ?? "") && looksLikePdf(tab.url)) autoOpen(tabId, tab.url);
   if (change.status !== "complete") return;
+  // A hard reload (which skips the service worker) of a readable viewer URL
+  // ends on an error page. If no extension page runs in the tab, reroute it.
+  const rerouted = viewerForPrettyUrl(tab.url);
+  if (rerouted) {
+    const contexts = await chrome.runtime.getContexts({ contextTypes: ["TAB"], tabIds: [tabId] });
+    if (!contexts.length) chrome.tabs.update(tabId, { url: rerouted });
+    return;
+  }
   if (!(await isPdfTab(tab))) {
     chrome.action.setBadgeText({ tabId, text: "" });
     return;
   }
   const { openMode } = await getSettings();
-  if (openMode === "always") {
-    chrome.tabs.update(tabId, { url: viewerUrl(tab.url) });
-    return;
-  }
   chrome.action.setBadgeBackgroundColor({ tabId, color: "#d97706" });
   chrome.action.setBadgeText({ tabId, text: "Q&A" });
   chrome.action.setTitle({ tabId, title: "Open this PDF in Paper Q&A" });
-  if (openMode === "ask") offer(tab);
+  // In "always" mode a PDF only stays in Chrome's viewer when the user came
+  // back to it, so offer the viewer instead of forcing it.
+  if (openMode !== "never") offer(tab);
 });
 
-chrome.tabs.onRemoved.addListener((tabId) => chrome.storage.session.remove(`pdf:${tabId}`));
+chrome.tabs.onRemoved.addListener((tabId) => chrome.storage.session.remove([`pdf:${tabId}`, `auto:${tabId}`]));
 
 async function offer(tab) {
   // Preferred: a small banner inside the tab. Chrome's PDF viewer may refuse
@@ -88,12 +145,18 @@ function showBanner() {
   open.style.cssText =
     "border:0;border-radius:6px;padding:6px 10px;background:#f59e0b;color:#111827;font-weight:600;cursor:pointer";
   open.onclick = () => chrome.runtime.sendMessage({ type: "openViewer" });
+  const always = document.createElement("button");
+  always.textContent = "Always";
+  always.title = "Open every PDF in Paper Q&A (make it the default PDF viewer). Change this in the extension's options.";
+  always.style.cssText =
+    "border:1px solid #4b5563;border-radius:6px;padding:5px 9px;background:none;color:#f9fafb;cursor:pointer";
+  always.onclick = () => chrome.runtime.sendMessage({ type: "openViewer", always: true });
   const close = document.createElement("button");
   close.textContent = "✕";
   close.title = "Dismiss";
   close.style.cssText = "border:0;background:none;color:#9ca3af;cursor:pointer;font-size:14px";
   close.onclick = () => bar.remove();
-  bar.append(label, open, close);
+  bar.append(label, open, always, close);
   document.documentElement.append(bar);
 }
 
@@ -130,8 +193,19 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === "openViewer" && sender.tab) {
+    if (msg.always) chrome.storage.local.set({ openMode: "always" });
     chrome.tabs.update(sender.tab.id, { url: viewerUrl(sender.tab.url) });
     return;
+  }
+  if (msg?.type === "lookupPaper") {
+    getSettings()
+      .then((s) => lookupPaper(msg.query ?? {}, { apiKey: s.s2ApiKey }))
+      .then((paper) => sendResponse({ ok: true, paper }))
+      .catch((e) => {
+        const err = e instanceof ScholarError ? e : new ScholarError("error", e?.message ?? String(e));
+        sendResponse({ ok: false, error: { code: err.code, message: err.message } });
+      });
+    return true; // async response
   }
   if (msg?.type === "listModels") {
     getSettings()
