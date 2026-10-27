@@ -37,11 +37,15 @@ jobs:
       # workflows, so the required CI check would never run on the release
       # PR. Dispatched runs are allowed, so start CI on the PR branch directly.
       - name: Run CI on the release PR
-        if: steps.rp.outputs.prs_created == 'true'
+        if: steps.rp.outputs.pr != ''
         env:
           GH_TOKEN: ${{ github.token }}
-          BRANCH: ${{ fromJSON(steps.rp.outputs.pr).headBranchName }}
-        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+          PR: ${{ steps.rp.outputs.pr }}
+        run: |
+          branch=$(jq -r '.headBranchName // empty' <<<"$PR")
+          if [ -n "$branch" ]; then
+            gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
+          fi
 
   publish:
     needs: release-please
