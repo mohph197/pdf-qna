@@ -2,6 +2,13 @@
 
 All notable changes to Paper Q&A are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.2.0](https://github.com/mohph197/pdf-qna/compare/v1.1.0...v1.2.0) (2026-10-28)
+
+
+### Features
+
+* citation previews, paper info and Paper Q&A as the default PDF viewer ([#11](https://github.com/mohph197/pdf-qna/issues/11)) ([4170073](https://github.com/mohph197/pdf-qna/commit/41700736e689f8690ea319946ecbfb4e6c6ad32f))
+
 ## [1.1.0](https://github.com/mohph197/pdf-qna/compare/v1.0.0...v1.1.0) (2026-10-27)
 
 
