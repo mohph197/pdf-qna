@@ -32,11 +32,16 @@ BUILT FOR REAL PAPERS
 
 • Export the questions, answers and quotes, with page numbers, as a Markdown file for your notes.
 • Answers are cached per file, so reopening a paper brings its highlights back instantly at no extra cost.
+
+READ PAPERS FASTER
+• Click a citation to preview the cited paper: title, authors, venue, citation count, a short summary and the abstract, with links to Google Scholar, arXiv and the PDF. Open the cited paper in Paper Q&A with one click.
+• The paper info button shows the same for the paper you're reading, with its BibTeX.
+• Make Paper Q&A your default PDF viewer: PDFs open in it straight away, and the address bar still shows the PDF's own URL.
 • Works with local files too (enable "Allow access to file URLs").
 
 YOUR KEY, YOUR DATA
 • Bring your own Anthropic API key. It is stored only in your browser.
-• The extension has no server and no analytics. The paper's text and your questions go only to Anthropic's API, and only when you press "Find answers".
+• The extension has no server and no analytics. The paper's text and your questions go only to Anthropic's API, and only when you press "Find answers". Pointing at or clicking a citation, or clicking the paper info button, looks up just that paper's reference, title or ID in public scholarly databases (Semantic Scholar, Crossref, OpenAlex, arXiv).
 • Choose the model (Claude Opus, Sonnet, Haiku or Fable) and how much effort it spends.
 
 LIMITATIONS
@@ -55,7 +60,7 @@ Paper Q&A is an independent project and is not affiliated with or endorsed by An
 | Field | File |
 | --- | --- |
 | Store icon (128×128) | `icons/icon128.png` |
-| Screenshots (1280×800) | `screenshot-2-answers.png`, `screenshot-3-zoom.png`, `screenshot-1-ask.png`, `screenshot-4-options.png` |
+| Screenshots (1280×800) | `screenshot-2-answers.png`, `screenshot-5-citation.png`, `screenshot-3-zoom.png`, `screenshot-1-ask.png`, `screenshot-4-options.png` |
 | Small promo tile (440×280) | `promo-small.png` |
 | Marquee promo tile (1400×560) | `promo-marquee.png` |
 
@@ -74,19 +79,19 @@ Paper Q&A is an independent project and is not affiliated with or endorsed by An
 | --- | --- |
 | `storage` | Saves the user's API key, settings, and the questions and answers for each PDF so highlights return when the PDF is reopened. |
 | `unlimitedStorage` | The per-PDF answer cache can grow beyond the default quota for users with many papers. |
-| `tabs` | Reads the URL of the current tab to recognize PDFs (including `file://` PDFs) and to open them in the extension's viewer. |
+| `tabs` | Reads the URL of the current tab to recognize PDFs (including `file://` PDFs), to open them in the extension's viewer (immediately, if the user made it the default PDF viewer), and to reload the viewer at its readable address. |
 | `scripting` | Injects a small "Open in Paper Q&A" banner into a tab that is showing a PDF. Nothing else is injected, and only into PDF tabs. |
-| `webRequest` | Observes (does not block or modify) the `Content-Type` of top-level page loads to recognize PDFs whose URL doesn't end in ".pdf", such as arxiv.org/pdf/… links. |
+| `webRequest` | Observes (does not block or modify) the `Content-Type` of top-level page loads to recognize PDFs whose URL doesn't end in ".pdf", such as arxiv.org/pdf/… links, and, when the user made Paper Q&A the default PDF viewer, to open them in it right away. |
 | `notifications` | Fallback offer to open a PDF when a banner can't be shown in the tab. |
 | `contextMenus` | Adds an "Open PDF in Paper Q&A" item for links. |
-| Host permission `<all_urls>` | Needed to download the PDF the user chooses to open, from whatever site it is on (with the user's cookies, for papers behind a login), to detect PDF tabs on any site, and to call `api.anthropic.com`. The extension reads no other page content. |
+| Host permission `<all_urls>` | Needed to download the PDF the user chooses to open, from whatever site it is on (with the user's cookies, for papers behind a login), to detect PDF tabs on any site, and to call `api.anthropic.com` and, when the user points at or clicks a citation or clicks the paper info button, the public scholarly APIs `api.semanticscholar.org`, `api.crossref.org`, `api.openalex.org` and `export.arxiv.org`. The extension reads no other page content. |
 
 **Remote code:** No, I am not using remote code. All JavaScript, including pdf.js and pdf-lib, is bundled in the package. Scripts embedded in PDFs are never run.
 
 **Data usage.** Tick these:
 
-- **Website content.** The text of the PDF the user opens is sent to Anthropic's API when the user asks a question.
-- **Authentication information.** The user's own Anthropic API key is stored locally and sent only to Anthropic's API.
+- **Website content.** The text of the PDF the user opens is sent to Anthropic's API when the user asks a question. When the user points at or clicks a citation, or clicks the paper info button, that paper's bibliography entry, title or identifier is sent to public scholarly APIs (Semantic Scholar, Crossref, OpenAlex, arXiv) to look it up.
+- **Authentication information.** The user's own Anthropic API key is stored locally and sent only to Anthropic's API. An optional Semantic Scholar API key is stored locally and sent only to the Semantic Scholar API.
 
 Then certify all three statements:
 

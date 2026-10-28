@@ -33,6 +33,8 @@ export const DEFAULT_SETTINGS = {
   model: DEFAULT_MODEL,
   effort: DEFAULT_EFFORT,
   openMode: "ask", // "ask" | "always" | "never": what to do when a PDF opens
+  citationPreviews: true, // clicking a citation shows the cited paper
+  s2ApiKey: "", // optional Semantic Scholar API key for paper lookups
 };
 
 export async function getSettings() {

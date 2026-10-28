@@ -40,6 +40,9 @@ jobs:
       - name: Matcher test on real papers
         run: npm run test:matcher
 
+      - name: Citation reference test on real papers
+        run: npm run test:references
+
       - name: Build store package
         run: npm run package
 

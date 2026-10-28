@@ -5,6 +5,8 @@ import { buildIndex, matchQuote, pageText } from "../../lib/matcher.js";
 import { getSettings, modelInfo } from "../../shared/models.js";
 import { exportAnnotated } from "./export.js";
 import { answersToMarkdown } from "./markdown.js";
+import { h } from "./dom.js";
+import { initPapers } from "./papers.mjs";
 
 const app = window.PDFViewerApplication;
 
@@ -12,6 +14,7 @@ export const COLORS = ["#ffd400", "#4dabf7", "#69db7c", "#ff8787", "#b197fc", "#
 
 const state = {
   doc: null, // { hash, name, bytes, pages, pageTexts, index }
+  src: null, // the PDF's own URL, when it was opened from one
   questions: [], // [{ id, text, color, web, freeform }]
   results: {}, // id -> { answerable, answer, quotes: [{ text, page }], webSources: [{ url, title, quote }], model }
   matches: {}, // id -> [match per quote]
@@ -20,25 +23,6 @@ const state = {
   error: null,
   port: null,
 };
-
-// ---------------------------------------------------------------------------
-// Tiny DOM helper (the viewer's CSP forbids inline style attributes, so no
-// innerHTML templates with styles; properties are set through the DOM).
-
-function h(tag, props = {}, ...children) {
-  const el = document.createElement(tag);
-  for (const [k, v] of Object.entries(props)) {
-    if (v == null || v === false) continue;
-    if (k === "class") el.className = v;
-    else if (k === "style") for (const [prop, val] of Object.entries(v)) el.style.setProperty(prop, val);
-    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
-    else if (k === "dataset") Object.assign(el.dataset, v);
-    else if (k in el && typeof v !== "string") el[k] = v;
-    else el.setAttribute(k, v === true ? "" : v);
-  }
-  el.append(...children.flat().filter((c) => c != null && c !== false));
-  return el;
-}
 
 // ---------------------------------------------------------------------------
 // Sidebar layout
@@ -396,6 +380,10 @@ async function restore() {
 async function loadFromParam() {
   const src = new URLSearchParams(location.search).get("src");
   if (!src) return;
+  state.src = src;
+  // Show the PDF's own URL in the address bar; the service worker routes it
+  // back to the viewer on reload.
+  if (/^(https?|file):/i.test(src)) history.replaceState(history.state, "", chrome.runtime.getURL("") + src + location.hash);
   setStatus("Loading PDF…");
   try {
     const bytes = await fetchBytes(src);
@@ -772,6 +760,12 @@ async function main() {
   render();
 
   await app.initializedPromise;
+  initPapers({ app, getDoc: () => state.doc, getSource: () => state.src });
+  app.eventBus.on("fileinputchange", () => {
+    // A file opened from the toolbar replaces the one named in the address.
+    state.src = null;
+    history.replaceState(history.state, "", chrome.runtime.getURL("vendor/pdfjs/web/viewer.html"));
+  });
   app.eventBus.on("documentloaded", () =>
     onDocumentLoaded().catch((e) => setError({ code: "load", message: `Couldn't read the PDF's text: ${e.message}` })),
   );

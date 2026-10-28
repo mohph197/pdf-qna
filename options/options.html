@@ -44,9 +44,37 @@
         <label for="openMode">When a PDF opens in Chrome</label>
         <select id="openMode">
           <option value="ask">Offer to open it in Paper Q&amp;A</option>
-          <option value="always">Always open it in Paper Q&amp;A</option>
+          <option value="always">Always open it in Paper Q&amp;A (default PDF viewer)</option>
           <option value="never">Do nothing (use the toolbar button)</option>
         </select>
+        <p class="hint">
+          "Always" makes Paper Q&amp;A Chrome's PDF viewer: PDFs open in it straight away, including local files when file
+          access is allowed. Going Back from the viewer shows the PDF in Chrome's own viewer.
+        </p>
+      </section>
+
+      <section>
+        <label for="citationPreviews">Citations and paper info</label>
+        <label class="check">
+          <input id="citationPreviews" type="checkbox" />
+          Show a preview of the cited paper when I click a citation
+        </label>
+        <p class="hint">
+          Clicking a citation, or the toolbar's paper info button, looks the paper up for its title, authors, venue, citation
+          count, summary and links. Semantic Scholar, Crossref, OpenAlex and arXiv are asked at once and the first match is
+          shown. Only the reference text, the paper's title or its identifiers (DOI, arXiv ID) are sent, and only when you
+          point at or click a citation. Found papers are kept with the cached answers. With previews off, citations jump to
+          the reference list as usual.
+        </p>
+        <label for="s2ApiKey">Semantic Scholar API key (optional)</label>
+        <div class="row">
+          <input id="s2ApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Not needed; avoids busy-time limits" />
+        </div>
+        <p class="hint">
+          Without a key, Semantic Scholar's public rate limit is often used up, and lookups then use Crossref, OpenAlex and
+          arXiv instead, which have no TL;DR summaries. A free key gives you your own limit: <a href="https://www.semanticscholar.org/product/api#api-key-form" target="_blank" rel="noreferrer">request one</a>.
+          It is stored only in this browser and sent only to api.semanticscholar.org.
+        </p>
       </section>
 
       <section>
