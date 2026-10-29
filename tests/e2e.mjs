@@ -1,8 +1,9 @@
 // End-to-end test: loads the unpacked extension into headless Chrome, opens
 // a real paper, answers questions with a mocked Claude API, and checks
 // highlights, quote navigation, zoom, cache restore, local files, the
-// "open in Paper Q&A" offer, readable viewer URLs, "always open" mode, and
-// citation previews and paper info with a mocked Semantic Scholar API.
+// "open in Paper Q&A" offer, readable viewer URLs, "always open" mode and
+// going back to Chrome's viewer, asking about selected text, and citation
+// previews and paper info with a mocked Semantic Scholar API.
 //
 //   npm run test:e2e
 //   CHROME_PATH=/path/to/chrome npm run test:e2e
@@ -166,6 +167,25 @@ const freeformReply = toSse([
   ),
 ]);
 
+// A question about text selected in the PDF.
+const SELECTION_QUESTION = "What does this mean?";
+const selectionReply = toSse([
+  start,
+  ...textReply(
+    JSON.stringify({
+      answers: [
+        {
+          question_index: 1,
+          answerable: true,
+          answer: "It names the paper's topic: training very deep networks with residual learning.",
+          quotes: [{ text: "An ensemble of these residual nets achieves 3.57% error on the ImageNet test set.", page: 1 }],
+          web_sources: [],
+        },
+      ],
+    }),
+  ),
+]);
+
 // Mocked paper lookups. Semantic Scholar knows the open paper (found by the
 // arXiv stamp on its first page) but is "busy" for title searches, so the
 // cited paper comes from arXiv's title search plus OpenAlex. Crossref has
@@ -258,8 +278,16 @@ try {
     const body = JSON.parse(ev.request.postData ?? "{}");
     apiCalls.push({ headers: ev.request.headers, body });
     const resumed = body.messages.at(-1).role === "assistant";
-    const freeform = body.messages[0].content[1].text.includes("[free-form]");
-    const reply = body.tools ? (resumed ? webAnswer : webPaused) : freeform ? freeformReply : sse;
+    const questions = body.messages[0].content[1].text;
+    const reply = body.tools
+      ? resumed
+        ? webAnswer
+        : webPaused
+      : questions.includes("[free-form]")
+        ? freeformReply
+        : questions.includes("[about selection]")
+          ? selectionReply
+          : sse;
     await cdp.send("Fetch.fulfillRequest", {
       requestId: ev.requestId,
       responseCode: 200,
@@ -506,6 +534,47 @@ try {
     assert.deepEqual(card, { quotes: 0, copy: "Copy answer" });
   });
 
+  await step("selected text in the PDF can be asked about", async () => {
+    await page.evaluate(() => (PDFViewerApplication.page = 1));
+    await page.waitForSelector('.page[data-page-number="1"] .textLayer .endOfContent', { timeout: 10000 });
+    // Select a whole line of the title area that has no highlight in it.
+    const selected = await page.evaluate(() => {
+      const span = [...document.querySelectorAll('.page[data-page-number="1"] .textLayer span:not(.qa-hl)')].find((s) => {
+        const r = s.getBoundingClientRect();
+        return s.textContent.trim().length > 20 && !s.querySelector(".qa-hl") && r.top > 0 && r.bottom < innerHeight;
+      });
+      const range = document.createRange();
+      range.selectNodeContents(span);
+      getSelection().removeAllRanges();
+      getSelection().addRange(range);
+      return span.textContent.replace(/\s+/g, " ").trim();
+    });
+    await page.waitForSelector(".qa-sel-ask:not([hidden])", { timeout: 5000 });
+    await page.click(".qa-sel-ask");
+    assert.equal(await page.$eval(".qa-context", (e) => e.hidden), false);
+    assert.equal(await page.$eval(".qa-context .qa-page", (e) => e.textContent), "About p. 1");
+    assert.equal(await page.$eval(".qa-sel-ask", (e) => e.hidden), true);
+    assert.equal(await page.evaluate(() => document.activeElement.className), "qa-input");
+    await page.type(".qa-input", SELECTION_QUESTION);
+    await page.click(".qa-compose .qa-btn:not(.qa-primary)");
+    assert.equal(await page.$eval(".qa-context", (e) => e.hidden), true, "the selection must not stick to later questions");
+    await page.click(".qa-primary");
+    await page.waitForFunction(() => document.querySelectorAll(".qa-card")[7]?.querySelector(".qa-quote"), { timeout: 30000 });
+    const call = apiCalls.at(-1);
+    assert.equal(
+      call.body.messages[0].content[1].text,
+      `Questions:\n1. [about selection] ${SELECTION_QUESTION}\n<selection page="1">\n${selected}\n</selection>`,
+    );
+    const about = await page.$$eval(".qa-card", (els) => els.at(-1).querySelector(".qa-about")?.textContent);
+    assert.equal(about, `About p. 1“${selected}”`);
+    // The selection is cached with the question and exported.
+    await page.evaluate(() => (window.__markdown = null));
+    await page.click(".qa-footer .qa-btn:nth-child(2)");
+    await page.waitForFunction(() => window.__markdown, { timeout: 10000 });
+    const md = await page.evaluate(() => window.__markdown);
+    assert.ok(md.includes(`## 8. ${SELECTION_QUESTION}\n\nAbout the selected text on p. 1:\n\n> “${selected}”\n`), md.slice(-600));
+  });
+
   await step("local file:// PDFs load (with file access allowed)", async () => {
     await page.goto(`${viewer}?src=${encodeURIComponent(`file://${PAPER}`)}`);
     await page.waitForFunction(() => /12 pages|Couldn't/.test(document.body.textContent), { timeout: 30000 });
@@ -551,6 +620,33 @@ try {
         const tabs = await chrome.tabs.query({});
         await chrome.tabs.remove(tabs.filter((t) => t.url === url).map((t) => t.id));
       }, pretty);
+      await ext.close();
+    }
+  });
+
+  await step("Chrome's PDF viewer can be made the default again from the viewer and the options page", async () => {
+    const openMode = () => page.evaluate(async () => (await chrome.storage.local.get("openMode")).openMode);
+    const note = () => page.$eval(".qa-viewer-note", (e) => (e.hidden ? null : e.textContent));
+    assert.equal(await note(), null, "the note must only show in always mode");
+    await page.evaluate(() => chrome.storage.local.set({ openMode: "always" }));
+    await page.waitForSelector(".qa-viewer-note:not([hidden])", { timeout: 5000 });
+    assert.equal(await note(), "Paper Q&A opens every PDF. Use Chrome's PDF viewer again");
+    await page.click(".qa-viewer-note button");
+    await page.waitForFunction(() => /default again/.test(document.querySelector(".qa-viewer-note").textContent));
+    assert.equal(await openMode(), "ask");
+    assert.equal(await note(), "Chrome's PDF viewer is the default again. Open this PDF there");
+
+    const ext = await browser.newPage();
+    try {
+      await ext.goto(`chrome-extension://${id}/options/options.html`);
+      await ext.evaluate(() => chrome.storage.local.set({ openMode: "always" }));
+      await ext.reload();
+      await ext.waitForSelector("#restoreViewerRow:not([hidden])", { timeout: 5000 });
+      await ext.click("#restoreViewer");
+      await ext.waitForFunction(() => document.querySelector("#restoredViewer").textContent);
+      assert.equal(await ext.$eval("#openMode", (e) => e.value), "ask");
+      assert.equal(await openMode(), "ask");
+    } finally {
       await ext.close();
     }
   });

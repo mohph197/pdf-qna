@@ -2,7 +2,7 @@
 
 export const SYSTEM_PROMPT = `You answer questions about a research paper using only the paper's text.
 
-The user message contains the paper inside <paper> tags, split into pages marked "=== Page N ===", followed by numbered questions.
+The user message contains the paper inside <paper> tags, split into pages marked "=== Page N ===", followed by numbered questions. A question may be followed by a <selection> passage.
 
 For every question, return:
 - question_index: the question's number.
@@ -15,6 +15,8 @@ For every question, return:
 Web search: only questions marked [web search allowed] may use the web_search tool. Search when the paper doesn't fully answer such a question or when the question asks about something outside the paper (later work, citations, code, authors, current status). For these questions, "answerable" is true if the paper or the web answers it, and the answer must say which parts come from the web. List each web page you relied on in web_sources with its exact url and title from the search results and a quote: a short passage copied verbatim from that page that supports the answer. Still quote the paper when it supports part of the answer. Never use web search for unmarked questions.
 
 Free-form: for questions marked [free-form], "answer" takes whatever form and length the question asks for, such as a list, a Markdown table, JSON, or a full summary; follow any requested format exactly and use line breaks as needed. Quotes are optional for these questions: include up to 3 verbatim quotes only where they directly support the answer, and return an empty list otherwise. "answerable" is still false if the paper does not contain the requested information.
+
+Selected passage: a question marked [about selection] is followed by a <selection> passage that the reader selected in the paper, starting on the given page. The question is about that passage: words such as "this", "here" or "it" refer to it. Answer about the passage, using the rest of the paper for context. Quotes may come from the passage itself or from elsewhere in the paper; prefer passages elsewhere that explain or support the answer when they exist.
 
 Answer every question exactly once, in order.`;
 
@@ -64,14 +66,21 @@ export const ANSWER_SCHEMA = {
   additionalProperties: false,
 };
 
-/** Questions are { text, web, freeform } objects; plain strings mean neither. */
+/**
+ * Questions are { text, web, freeform, selection } objects (selection:
+ * { text, page } of a passage the reader selected); plain strings mean none.
+ */
 const asQuestion = (q) => (typeof q === "string" ? { text: q } : q);
 
 export function buildUserContent(pageTexts, questions) {
   const paper = pageTexts.map((t, i) => `=== Page ${i + 1} ===\n${t}`).join("\n\n");
   const qs = questions
     .map(asQuestion)
-    .map((q, i) => `${i + 1}. ${q.web ? "[web search allowed] " : ""}${q.freeform ? "[free-form] " : ""}${q.text}`)
+    .map((q, i) => {
+      const tags = `${q.web ? "[web search allowed] " : ""}${q.freeform ? "[free-form] " : ""}${q.selection ? "[about selection] " : ""}`;
+      const sel = q.selection ? `\n<selection page="${q.selection.page ?? "?"}">\n${q.selection.text}\n</selection>` : "";
+      return `${i + 1}. ${tags}${q.text}${sel}`;
+    })
     .join("\n");
   return [
     // The paper is a stable prefix; caching it makes follow-up questions on

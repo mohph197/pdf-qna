@@ -21,7 +21,7 @@ const percentEncode = (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padS
 /**
  * @param {object} p
  * @param {string} p.name  file name of the PDF
- * @param {{ id, text }[]} p.questions
+ * @param {{ id, text, selection?: { text, page } }[]} p.questions
  * @param {object} p.results  id -> { answerable, answer, quotes: [{ text, page }], webSources: [{ url, title, quote }], model }
  * @param {object} p.matches  id -> [{ status, score, page, segments }] per quote
  * @param {Date} [p.date]
@@ -40,6 +40,10 @@ export function answersToMarkdown({ name, questions, results, matches, date = ne
     const [title, ...rest] = q.text.split(/\r?\n/);
     out.push("", `## ${n + 1}. ${title}`, "");
     if (rest.some((l) => l.trim())) out.push("```text", ...rest, "```", "");
+    if (q.selection) {
+      const { text, page } = q.selection;
+      out.push(`About the selected text${page ? ` on p. ${page}` : ""}:`, "", blockquote(`“${text}”`), "");
+    }
     const res = results[q.id];
     if (!res) {
       out.push("_Not asked yet._");

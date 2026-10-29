@@ -243,8 +243,9 @@ async function streamWithRetry(args, onStatus) {
  * Ask questions about a paper.
  * @param {object} p
  * @param {string[]} p.pageTexts  text of every page, in order
- * @param {{ text: string, web?: boolean, freeform?: boolean }[]} p.questions
- *   web: may use web search; freeform: answer in any format, quotes optional
+ * @param {{ text: string, web?: boolean, freeform?: boolean, selection?: { text: string, page: number } }[]} p.questions
+ *   web: may use web search; freeform: answer in any format, quotes optional;
+ *   selection: a passage the reader selected that the question is about
  * @returns {Promise<{answers, model, usage, webSearches}>}
  */
 export async function askPaper({ apiKey, model, effort, pageTexts, questions, signal, onStatus, onDelta }) {
