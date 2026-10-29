@@ -2,6 +2,13 @@
 
 All notable changes to Paper Q&A are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.3.1](https://github.com/mohph197/pdf-qna/compare/v1.3.0...v1.3.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* **citations:** previews in ICLR papers and in PDFs without citation links ([#16](https://github.com/mohph197/pdf-qna/issues/16)) ([b89b45e](https://github.com/mohph197/pdf-qna/commit/b89b45ecf2e0f0f52c024dd4e0e94ff4b3fffe13))
+
 ## [1.3.0](https://github.com/mohph197/pdf-qna/compare/v1.2.0...v1.3.0) (2026-10-29)
 
 
