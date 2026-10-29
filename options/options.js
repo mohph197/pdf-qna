@@ -95,7 +95,7 @@ $("restoreViewer").addEventListener("click", async () => {
 
 $("clearCache").addEventListener("click", async () => {
   const all = await chrome.storage.local.get(null);
-  await chrome.storage.local.remove(Object.keys(all).filter((k) => k.startsWith("doc:") || k.startsWith("paper:")));
+  await chrome.storage.local.remove(Object.keys(all).filter((k) => k.startsWith("doc:") || k.startsWith("impl:") || k.startsWith("paper:")));
   refreshCacheInfo();
 });
 

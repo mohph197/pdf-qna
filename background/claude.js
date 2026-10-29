@@ -3,6 +3,16 @@
 
 import { modelInfo } from "../shared/models.js";
 import { ANSWER_SCHEMA, SYSTEM_PROMPT, buildUserContent, parseAnswers } from "../shared/prompt.js";
+import {
+  IMPLEMENT_PROMPT,
+  IMPLEMENT_SCHEMA,
+  SYSTEMS_PROMPT,
+  SYSTEMS_SCHEMA,
+  buildImplementContent,
+  buildSystemsContent,
+  parseImplementation,
+  parseSystems,
+} from "../shared/implement.js";
 
 const API = "https://api.anthropic.com/v1";
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
@@ -66,11 +76,12 @@ async function errorFromResponse(res, model) {
       if (res.status === 400 && /prompt is too long|too many tokens|context window/i.test(message)) {
         return new ClaudeError("too_long", `This paper is too long for ${model}'s context window. ${message}`);
       }
-      if (res.status === 400 && /web.?search/i.test(message)) {
+      if (res.status === 400 && /web.?(search|fetch)/i.test(message)) {
+        const tool = /web.?fetch/i.test(message) ? "Web fetch" : "Web search";
         return new ClaudeError(
           "web_disabled",
-          "Web search isn't available to your API key. An admin can enable it in the Claude Console under Settings > Capabilities; " +
-            `otherwise ask without "Search the web". (${message})`,
+          `${tool} isn't available to your API key. An admin can enable it in the Claude Console under Settings > Capabilities; ` +
+            `otherwise untick "Search the web". (${message})`,
         );
       }
       if (res.status === 400 && /output_config|json_schema|format/i.test(message)) {
@@ -90,8 +101,8 @@ const TEXT_LIKE = new Set(["text", "thinking", "redacted_thinking"]);
 /**
  * One streamed request. Returns { text, stopReason, model, usage, content,
  * searchResults }: content is the reconstructed list of content blocks (sent
- * back to resume after pause_turn), searchResults maps each web search result
- * or citation url to its title. onDelta(totalChars) is called as text arrives.
+ * back to resume after pause_turn), searchResults maps each web search result,
+ * fetched page or citation url to its title. onDelta(totalChars) is called as text arrives.
  */
 async function streamMessage({ apiKey, body, betas, signal, onDelta }) {
   let res;
@@ -144,6 +155,8 @@ async function streamMessage({ apiKey, body, betas, signal, onDelta }) {
         partialJson = "";
         content.push(block);
         if (blockType === "web_search_tool_result" && Array.isArray(block.content)) block.content.forEach(addSource);
+        // A fetched page: { type: "web_fetch_result", url, content: { type: "document", title } }.
+        if (blockType === "web_fetch_tool_result" && block.content?.url) addSource({ url: block.content.url, title: block.content.content?.title });
         break;
       case "content_block_delta": {
         const d = evt.delta ?? {};
@@ -239,16 +252,7 @@ async function streamWithRetry(args, onStatus) {
   }
 }
 
-/**
- * Ask questions about a paper.
- * @param {object} p
- * @param {string[]} p.pageTexts  text of every page, in order
- * @param {{ text: string, web?: boolean, freeform?: boolean, selection?: { text: string, page: number } }[]} p.questions
- *   web: may use web search; freeform: answer in any format, quotes optional;
- *   selection: a passage the reader selected that the question is about
- * @returns {Promise<{answers, model, usage, webSearches}>}
- */
-export async function askPaper({ apiKey, model, effort, pageTexts, questions, signal, onStatus, onDelta }) {
+function checkRequest(apiKey, model, pageTexts) {
   if (!apiKey) {
     throw new ClaudeError("no_key", "No Anthropic API key set. Add one on the options page.");
   }
@@ -262,33 +266,45 @@ export async function askPaper({ apiKey, model, effort, pageTexts, questions, si
         `(${Math.round(info.context / 1000)}k). Try a shorter document or split it.`,
     );
   }
+  return info;
+}
 
+/**
+ * One request whose reply is a JSON object: structured output when the model
+ * supports it, paused web turns resumed, and one retry that shows the model
+ * what was wrong with a malformed reply.
+ * @param {object} p
+ * @param {(text: string, searchResults: Map<string, string>) => any} p.parse
+ *   validates the reply text; throws an Error describing what is wrong
+ * @param {string} p.retryHint  added to the retry request
+ * @param {string} p.refusal  error message when Claude declines
+ * @param {string} p.cutOffHint  added to the error when a cut-off reply couldn't be used
+ * @returns {Promise<{ data, model, usage, webSearches, webFetches }>}
+ */
+async function askJson({ apiKey, model, effort, system, schema, content, tools, maxTokens, parse, status, retryHint, refusal, cutOffHint, signal, onStatus, onDelta }) {
+  const info = modelInfo(model);
   const betas = info.fallbacks ? [FALLBACK_BETA] : [];
-  const webAllowed = questions.map((q) => !!q.web);
-  const freeform = questions.map((q) => !!q.freeform);
-  const tools = webAllowed.some(Boolean) ? [{ type: info.webSearch, name: "web_search", max_uses: 5 }] : [];
   let useSchema = true;
   const base = () => ({
     model,
-    // Free-form answers (tables, extractions) can be much longer than short ones.
-    max_tokens: freeform.some(Boolean) ? 32000 : 16000,
-    system: SYSTEM_PROMPT,
+    max_tokens: maxTokens,
+    system,
     output_config: {
       effort,
-      ...(useSchema ? { format: { type: "json_schema", schema: ANSWER_SCHEMA } } : {}),
+      ...(useSchema ? { format: { type: "json_schema", schema } } : {}),
     },
     ...(tools.length ? { tools } : {}),
     // Re-run on a fallback model server-side if a safety classifier declines.
     ...(info.fallbacks ? { fallbacks: "default" } : {}),
   });
 
-  const messages = [{ role: "user", content: buildUserContent(pageTexts, questions) }];
-  let usageTotal = {};
+  const messages = [{ role: "user", content }];
   let webSearches = 0;
+  let webFetches = 0;
   const searchResults = new Map();
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    onStatus?.(attempt === 0 ? `Asking ${model}…` : "Response was malformed; asking again…");
+    onStatus?.(attempt === 0 ? status : "Response was malformed; asking again…");
     let reply;
     try {
       const send = (msgs) => streamWithRetry({ apiKey, body: { ...base(), messages: msgs }, betas, signal, onDelta }, onStatus);
@@ -297,6 +313,7 @@ export async function askPaper({ apiKey, model, effort, pageTexts, questions, si
       let turn = [];
       for (let resumes = 0; ; resumes++) {
         webSearches += reply.usage?.server_tool_use?.web_search_requests ?? 0;
+        webFetches += reply.usage?.server_tool_use?.web_fetch_requests ?? 0;
         for (const [url, title] of reply.searchResults) if (!searchResults.get(url)) searchResults.set(url, title);
         if (reply.stopReason !== "pause_turn" || resumes >= 3) break;
         turn = [...turn, ...reply.content];
@@ -313,31 +330,123 @@ export async function askPaper({ apiKey, model, effort, pageTexts, questions, si
       }
       throw e;
     }
-    usageTotal = reply.usage;
 
-    if (reply.stopReason === "refusal") {
-      throw new ClaudeError("refusal", "Claude declined to answer these questions about this document.");
-    }
+    if (reply.stopReason === "refusal") throw new ClaudeError("refusal", refusal);
     try {
-      const answers = parseAnswers(reply.text, questions.length, pageTexts.length, { webAllowed, freeform, searchResults });
-      return { answers, model: reply.model, usage: usageTotal, webSearches };
+      const data = parse(reply.text, searchResults);
+      return { data, model: reply.model, usage: reply.usage, webSearches, webFetches };
     } catch (e) {
       if (attempt === 1) {
         throw new ClaudeError(
           "bad_response",
-          `Claude's reply couldn't be used after a retry: ${e.message}` +
-            (reply.stopReason === "max_tokens" ? " (the reply was cut off; try fewer questions at once)" : ""),
+          `Claude's reply couldn't be used after a retry: ${e.message}` + (reply.stopReason === "max_tokens" ? ` (${cutOffHint})` : ""),
         );
       }
       // Retry once, showing the model what was wrong.
       messages.push({ role: "assistant", content: reply.text || "(empty)" });
-      messages.push({
-        role: "user",
-        content: `That reply can't be used: ${e.message} Reply again with only the JSON object described in the instructions, covering all ${questions.length} questions.`,
-      });
+      messages.push({ role: "user", content: `That reply can't be used: ${e.message} ${retryHint}` });
     }
   }
   throw new ClaudeError("bad_response", "Unreachable");
+}
+
+/**
+ * Ask questions about a paper.
+ * @param {object} p
+ * @param {string[]} p.pageTexts  text of every page, in order
+ * @param {{ text: string, web?: boolean, freeform?: boolean, selection?: { text: string, page: number } }[]} p.questions
+ *   web: may use web search; freeform: answer in any format, quotes optional;
+ *   selection: a passage the reader selected that the question is about
+ * @returns {Promise<{answers, model, usage, webSearches}>}
+ */
+export async function askPaper({ apiKey, model, effort, pageTexts, questions, signal, onStatus, onDelta }) {
+  const info = checkRequest(apiKey, model, pageTexts);
+  const webAllowed = questions.map((q) => !!q.web);
+  const freeform = questions.map((q) => !!q.freeform);
+  const { data, ...rest } = await askJson({
+    apiKey,
+    model,
+    effort,
+    system: SYSTEM_PROMPT,
+    schema: ANSWER_SCHEMA,
+    content: buildUserContent(pageTexts, questions),
+    tools: webAllowed.some(Boolean) ? [{ type: info.webSearch, name: "web_search", max_uses: 5 }] : [],
+    // Free-form answers (tables, extractions) can be much longer than short ones.
+    maxTokens: freeform.some(Boolean) ? 32000 : 16000,
+    parse: (text, searchResults) => parseAnswers(text, questions.length, pageTexts.length, { webAllowed, freeform, searchResults }),
+    status: `Asking ${model}…`,
+    retryHint: `Reply again with only the JSON object described in the instructions, covering all ${questions.length} questions.`,
+    refusal: "Claude declined to answer these questions about this document.",
+    cutOffHint: "the reply was cut off; try fewer questions at once",
+    signal,
+    onStatus,
+    onDelta,
+  });
+  return { answers: data, model: rest.model, usage: rest.usage, webSearches: rest.webSearches };
+}
+
+/**
+ * List the systems (models, architectures, algorithms…) a paper implements.
+ * @returns {Promise<{systems: {name, kind, summary, pages}[], model, usage}>}
+ */
+export async function findSystems({ apiKey, model, effort, pageTexts, signal, onStatus, onDelta }) {
+  checkRequest(apiKey, model, pageTexts);
+  const { data, ...rest } = await askJson({
+    apiKey,
+    model,
+    effort,
+    system: SYSTEMS_PROMPT,
+    schema: SYSTEMS_SCHEMA,
+    content: buildSystemsContent(pageTexts),
+    tools: [],
+    maxTokens: 16000,
+    parse: (text) => parseSystems(text, pageTexts.length),
+    status: "Finding what the paper implements…",
+    retryHint: "Reply again with only the JSON object described in the instructions.",
+    refusal: "Claude declined to read this document.",
+    cutOffHint: "the reply was cut off",
+    signal,
+    onStatus,
+    onDelta,
+  });
+  return { systems: data, model: rest.model, usage: rest.usage };
+}
+
+/**
+ * Write a Claude Code prompt that reimplements one of the paper's systems.
+ * @param {object} p
+ * @param {{ name, kind, summary, pages }} p.system  the one to implement
+ * @param {object[]} [p.others]  the paper's other systems
+ * @param {string} [p.notes]  the reader's constraints
+ * @param {boolean} [p.web]  may use web search and web fetch
+ * @returns {Promise<{prompt, webSources, model, usage, webSearches, webFetches}>}
+ */
+export async function writeImplementation({ apiKey, model, effort, pageTexts, system, others, notes, web, signal, onStatus, onDelta }) {
+  const info = checkRequest(apiKey, model, pageTexts);
+  const { data, ...rest } = await askJson({
+    apiKey,
+    model,
+    effort,
+    system: IMPLEMENT_PROMPT,
+    schema: IMPLEMENT_SCHEMA,
+    content: buildImplementContent(pageTexts, { system, others, notes, web }),
+    tools: web
+      ? [
+          { type: info.webSearch, name: "web_search", max_uses: 5 },
+          { type: info.webFetch, name: "web_fetch", max_uses: 8 },
+        ]
+      : [],
+    maxTokens: 64000,
+    parse: (text, searchResults) => parseImplementation(text, { web, searchResults }),
+    status: `Writing the prompt with ${model}…`,
+    retryHint: "Reply again with only the JSON object described in the instructions.",
+    refusal: "Claude declined to write an implementation prompt for this document.",
+    cutOffHint: "the reply was cut off",
+    signal,
+    onStatus,
+    onDelta,
+  });
+  return { ...data, ...rest };
 }
 
 /** List models available to the key (for the options page). */

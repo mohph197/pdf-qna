@@ -48,6 +48,41 @@ html.qa-open #outerContainer {
   gap: 4px;
 }
 
+/* Tabs: Q&A and Implement (implement.mjs). */
+.qa-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--qa-border);
+}
+.qa-tab {
+  margin-bottom: -1px;
+  padding: 6px 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--qa-muted);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.qa-tab:hover {
+  color: var(--qa-fg);
+}
+.qa-tab[aria-selected="true"] {
+  border-bottom-color: var(--qa-accent);
+  color: var(--qa-fg);
+}
+.qa-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.qa-panel[hidden] {
+  display: none;
+}
+
 .qa-status {
   padding: 6px 12px;
   color: var(--qa-muted);
@@ -316,6 +351,88 @@ a.qa-web-source {
   gap: 8px;
   padding: 10px 12px;
   border-top: 1px solid var(--qa-border);
+}
+
+/* Implement tab. */
+.qa-impl-intro {
+  margin: 0 0 8px;
+  color: var(--qa-muted);
+  font-size: 12px;
+}
+.qa-impl-notes {
+  min-height: 44px;
+}
+.qa-impl-hint {
+  margin: 0;
+  color: var(--qa-muted);
+  font-size: 12px;
+}
+.qa-impl-system {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--qa-border);
+  border-left: 4px solid var(--qa-accent);
+  border-radius: 6px;
+  background: var(--qa-panel);
+  color: var(--qa-fg);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.qa-impl-system:hover {
+  border-color: var(--qa-accent);
+}
+.qa-impl-system-name {
+  font-weight: 600;
+}
+.qa-impl-system-summary {
+  font-size: 12px;
+}
+.qa-impl-system .qa-page {
+  font-size: 11px;
+  font-weight: 400;
+}
+.qa-impl-back {
+  align-self: flex-start;
+  color: var(--qa-muted);
+  font-size: 12px;
+}
+.qa-impl-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.qa-impl-head .qa-link {
+  flex: none;
+  color: var(--qa-muted);
+  font-size: 12px;
+}
+.qa-impl-actions {
+  display: flex;
+  gap: 8px;
+}
+.qa-impl-prompt {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--qa-border);
+  border-radius: 6px;
+  background: var(--qa-panel);
+  color: var(--qa-fg);
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.qa-impl-sources ol {
+  margin: 4px 0 0;
+  padding-left: 20px;
+  font-size: 12px;
+}
+.qa-impl-sources a {
+  color: var(--qa-accent);
 }
 
 .qa-viewer-note {

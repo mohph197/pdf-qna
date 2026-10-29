@@ -2,9 +2,9 @@
 // a real paper, answers questions with a mocked Claude API, and checks
 // highlights, quote navigation, zoom, cache restore, local files, the
 // "open in Paper Q&A" offer, readable viewer URLs, "always open" mode and
-// going back to Chrome's viewer, asking about selected text, and citation
-// previews (linked and plain-text) and paper info with a mocked Semantic
-// Scholar API.
+// going back to Chrome's viewer, asking about selected text, the Implement
+// tab's implementation prompts, and citation previews (linked and plain-text)
+// and paper info with a mocked Semantic Scholar API.
 //
 //   npm run test:e2e
 //   CHROME_PATH=/path/to/chrome npm run test:e2e
@@ -188,6 +188,50 @@ const selectionReply = toSse([
   ),
 ]);
 
+// The Implement tab. The paper's systems are listed; the reader picks the
+// second, and the prompt is written after a web search (paused turn) and a
+// fetch of the official README. One cited page was neither, so it is dropped.
+const SYSTEMS = [
+  { name: "Deep residual networks for ImageNet", kind: "architecture", summary: "ResNet-18 to ResNet-152 with bottleneck blocks.", pages: [4, 5, 99] },
+  { name: "Residual networks for CIFAR-10", kind: "architecture", summary: "6n+2-layer residual nets for 32×32 images.", pages: [7] },
+];
+const IMPLEMENT_NOTES = "PyTorch, a single GPU";
+const README_URL = `${CODE_URL}/blob/master/README.md`;
+const IMPL_PROMPT = "# Goal\n\nReimplement the CIFAR-10 residual networks of He et al. (2015).\n\n## Specification\n\n| depth | 6n+2 |\n|---|---|";
+const systemsReply = toSse([start, ...textReply(JSON.stringify({ systems: SYSTEMS }))]);
+const implementPaused = webPaused.replace("resnet official code", "resnet cifar-10 official code");
+const implementAnswer = toSse([
+  start,
+  { type: "content_block_start", index: 0, content_block: { type: "server_tool_use", id: "srvtoolu_2", name: "web_fetch", input: {} } },
+  { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: JSON.stringify({ url: README_URL }) } },
+  { type: "content_block_stop", index: 0 },
+  {
+    type: "content_block_start",
+    index: 1,
+    content_block: {
+      type: "web_fetch_tool_result",
+      tool_use_id: "srvtoolu_2",
+      content: {
+        type: "web_fetch_result",
+        url: README_URL,
+        content: { type: "document", source: { type: "text", media_type: "text/plain", data: "Deep Residual Networks" }, title: "README.md" },
+      },
+    },
+  },
+  { type: "content_block_stop", index: 1 },
+  ...textReply(
+    JSON.stringify({
+      prompt: IMPL_PROMPT,
+      web_sources: [
+        { url: README_URL, title: "README" },
+        { url: CODE_URL, title: "Code" },
+        { url: "https://example.com/made-up", title: "Made up" },
+      ],
+    }),
+    { server_tool_use: { web_fetch_requests: 1 } },
+  ),
+]);
+
 // Mocked paper lookups. Semantic Scholar knows the open paper (found by the
 // arXiv stamp on its first page) but is "busy" for title searches, so the
 // cited paper comes from arXiv's title search plus OpenAlex. Crossref has
@@ -292,7 +336,14 @@ try {
     apiCalls.push({ headers: ev.request.headers, body });
     const resumed = body.messages.at(-1).role === "assistant";
     const questions = body.messages[0].content[1].text;
-    const reply = body.tools
+    const schema = body.output_config?.format?.schema?.properties ?? {};
+    const reply = schema.systems
+      ? systemsReply
+      : schema.prompt
+        ? resumed
+          ? implementAnswer
+          : implementPaused
+        : body.tools
       ? resumed
         ? webAnswer
         : webPaused
@@ -586,6 +637,77 @@ try {
     await page.waitForFunction(() => window.__markdown, { timeout: 10000 });
     const md = await page.evaluate(() => window.__markdown);
     assert.ok(md.includes(`## 8. ${SELECTION_QUESTION}\n\nAbout the selected text on p. 1:\n\n> “${selected}”\n`), md.slice(-600));
+  });
+
+  await step("the Implement tab lists the paper's systems, lets the reader pick one and writes a prompt", async () => {
+    const before = apiCalls.length;
+    const tab = (name) => page.$eval(`.qa-tab[aria-selected="true"]`, (e) => e.textContent).then((t) => t === name);
+    await page.click(".qa-tab:nth-child(2)");
+    assert.ok(await tab("Implement"));
+    assert.deepEqual(await page.$$eval(".qa-panel", (els) => els.map((e) => e.hidden)), [true, false]);
+    await page.type(".qa-impl-notes", IMPLEMENT_NOTES);
+    await page.click(".qa-impl .qa-primary");
+    await page.waitForSelector(".qa-impl-system", { timeout: 30000 });
+    const choices = await page.$$eval(".qa-impl-system", (els) => els.map((e) => e.textContent));
+    assert.deepEqual(choices, [
+      "Deep residual networks for ImageNetarchitectureResNet-18 to ResNet-152 with bottleneck blocks.pp. 4, 5",
+      "Residual networks for CIFAR-10architecture6n+2-layer residual nets for 32×32 images.pp. 7",
+    ]);
+    assert.equal(apiCalls.length, before + 1);
+    const find = apiCalls.at(-1).body;
+    assert.equal(find.tools, undefined, "listing the systems must not search the web");
+    assert.equal(find.messages[0].content[1].text, "List the systems this paper implements.");
+    assert.ok(find.messages[0].content[0].cache_control, "the paper must be cached");
+
+    const shots = SHOTS ? join(SHOTS, "screenshot-6-implement.png") : null;
+    await (await page.$$(".qa-impl-system"))[1].click();
+    await page.waitForSelector(".qa-impl-prompt", { timeout: 30000 });
+    const calls = apiCalls.slice(before + 1);
+    assert.equal(calls.length, 2, "the paused web turn must be resumed");
+    assert.deepEqual(calls[0].body.tools, [
+      { type: "web_search_20260209", name: "web_search", max_uses: 5 },
+      { type: "web_fetch_20260209", name: "web_fetch", max_uses: 8 },
+    ]);
+    assert.equal(calls[0].body.max_tokens, 64000);
+    const ask = calls[0].body.messages[0].content[1].text;
+    assert.match(ask, /^<target>\[web search allowed\] Residual networks for CIFAR-10 \(architecture\): 6n\+2-layer residual nets for 32×32 images\. \(described on pp\. 7\)<\/target>/);
+    assert.match(ask, /The paper's other systems:\n- Deep residual networks for ImageNet \(architecture\)/);
+    assert.match(ask, /<notes>\nPyTorch, a single GPU\n<\/notes>/);
+    assert.equal(await page.$eval(".qa-impl-prompt", (e) => e.textContent), IMPL_PROMPT);
+    assert.equal(await page.$eval(".qa-impl-head strong", (e) => e.textContent), "Prompt for Residual networks for CIFAR-10");
+    const sources = await page.$$eval(".qa-impl-sources a", (els) => els.map((e) => [e.href, e.textContent]));
+    assert.deepEqual(sources, [
+      [README_URL, "README.md"],
+      [CODE_URL, "KaimingHe/deep-residual-networks"],
+    ]);
+    assert.match(await page.$eval(".qa-impl-status", (e) => e.textContent), /1 web search · 1 page fetched$/);
+    assert.equal(await page.$$eval(".qa-card", (e) => e.length), 8, "the Q&A cards must not change");
+    if (shots) await page.screenshot({ path: shots });
+
+    // Copy and download.
+    await page.evaluate(() => {
+      window.__prompt = null;
+      const orig = URL.createObjectURL;
+      URL.createObjectURL = (blob) => {
+        if (blob.type.startsWith("text/markdown")) blob.text().then((t) => (window.__prompt = t));
+        return orig(blob);
+      };
+    });
+    await page.click(".qa-impl-actions .qa-btn:nth-child(2)");
+    await page.waitForFunction(() => window.__prompt, { timeout: 10000 });
+    assert.equal(await page.evaluate(() => window.__prompt), `${IMPL_PROMPT}\n`);
+
+    // The other system can still be chosen, and everything is cached.
+    await page.click(".qa-impl-head .qa-link");
+    assert.equal(await page.$$eval(".qa-impl-system", (e) => e.length), 2);
+    await page.click(".qa-impl-back");
+    await page.reload();
+    await page.waitForSelector(".qa-impl-prompt", { timeout: 30000 });
+    assert.ok(await tab("Implement"), "the open tab must be remembered");
+    assert.equal(await page.$eval(".qa-impl-notes", (e) => e.value), IMPLEMENT_NOTES);
+    assert.equal(apiCalls.length, before + 3);
+    await page.click(".qa-tab:nth-child(1)");
+    assert.deepEqual(await page.$$eval(".qa-panel", (els) => els.map((e) => e.hidden)), [false, true]);
   });
 
   await step("plain-text numbered citations work like links in PDFs without them", async () => {

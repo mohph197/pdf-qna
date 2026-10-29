@@ -7,6 +7,7 @@ import { exportAnnotated } from "./export.js";
 import { answersToMarkdown } from "./markdown.js";
 import { h } from "./dom.js";
 import { initPapers } from "./papers.mjs";
+import { initImplement, setImplementDocument } from "./implement.mjs";
 
 const app = window.PDFViewerApplication;
 
@@ -59,21 +60,12 @@ function buildSidebar() {
   ui.reask = h("button", { class: "qa-btn", type: "button", onclick: () => ask(true) }, "Re-ask all");
   ui.clear = h("button", { class: "qa-btn qa-danger", type: "button", onclick: clearAll }, "Clear");
   ui.viewerNote = h("div", { class: "qa-viewer-note", hidden: true });
+  ui.panels = {};
+  ui.tabs = {};
 
-  ui.root = h(
-    "aside",
-    { id: "qaSidebar", class: "qa-sidebar" },
-    h(
-      "header",
-      { class: "qa-header" },
-      h("strong", {}, "Paper Q&A"),
-      h(
-        "div",
-        { class: "qa-header-actions" },
-        h("button", { class: "qa-icon", type: "button", title: "Settings", onclick: () => chrome.runtime.openOptionsPage() }, "⚙"),
-        h("button", { class: "qa-icon", type: "button", title: "Hide sidebar", onclick: () => toggleSidebar(false) }, "»"),
-      ),
-    ),
+  ui.panels.qa = h(
+    "div",
+    { class: "qa-panel", role: "tabpanel" },
     ui.status,
     ui.error,
     h(
@@ -104,6 +96,26 @@ function buildSidebar() {
     ),
     ui.list,
     h("footer", { class: "qa-footer" }, ui.export, ui.markdown, ui.reask, ui.clear),
+  );
+  ui.panels.implement = initImplement();
+
+  ui.root = h(
+    "aside",
+    { id: "qaSidebar", class: "qa-sidebar" },
+    h(
+      "header",
+      { class: "qa-header" },
+      h("strong", {}, "Paper Q&A"),
+      h(
+        "div",
+        { class: "qa-header-actions" },
+        h("button", { class: "qa-icon", type: "button", title: "Settings", onclick: () => chrome.runtime.openOptionsPage() }, "⚙"),
+        h("button", { class: "qa-icon", type: "button", title: "Hide sidebar", onclick: () => toggleSidebar(false) }, "»"),
+      ),
+    ),
+    h("nav", { class: "qa-tabs", role: "tablist" }, tabButton("qa", "Q&A"), tabButton("implement", "Implement")),
+    ui.panels.qa,
+    ui.panels.implement,
     ui.viewerNote,
   );
   ui.reopen = h(
@@ -126,6 +138,24 @@ function buildSidebar() {
   );
   document.body.append(ui.root, ui.reopen, ui.selAsk);
   document.documentElement.classList.add("qa-open");
+}
+
+// The sidebar's tabs: Q&A, and Implement (implement.mjs).
+function tabButton(name, label) {
+  ui.tabs[name] = h("button", { class: "qa-tab", type: "button", role: "tab", onclick: () => showTab(name) }, label);
+  return ui.tabs[name];
+}
+
+function showTab(name) {
+  for (const [key, tab] of Object.entries(ui.tabs)) {
+    tab.setAttribute("aria-selected", String(key === name));
+    ui.panels[key].hidden = key !== name;
+  }
+  try {
+    localStorage.setItem("qa-tab", name);
+  } catch {
+    /* storage unavailable */
+  }
 }
 
 function toggleSidebar(open) {
@@ -437,6 +467,7 @@ function attachSelection() {
   document.getSelection().removeAllRanges();
   ui.selAsk.hidden = true;
   if (ui.root.hidden) toggleSidebar(true);
+  showTab("qa");
   ui.input.focus();
 }
 
@@ -555,6 +586,7 @@ async function onDocumentLoaded() {
   painted.clear();
   setSelection(null);
   setError(null);
+  setImplementDocument(null);
   render();
 
   const bytes = await pdf.getData();
@@ -608,6 +640,7 @@ async function onDocumentLoaded() {
   if (!settings.apiKey) {
     setError({ code: "no_key", message: "Add your Anthropic API key to start asking questions." });
   }
+  setImplementDocument(state.doc);
   rematchAll();
   render();
   // Pages rendered while the text was being read missed their
@@ -926,6 +959,13 @@ async function main() {
     /* storage unavailable */
   }
   if (!open) toggleSidebar(false);
+  let tab = "qa";
+  try {
+    tab = localStorage.getItem("qa-tab") === "implement" ? "implement" : "qa";
+  } catch {
+    /* storage unavailable */
+  }
+  showTab(tab);
   render();
   getSettings().then((s) => renderViewerNote(s.openMode));
 

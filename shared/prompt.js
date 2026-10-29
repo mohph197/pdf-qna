@@ -72,8 +72,15 @@ export const ANSWER_SCHEMA = {
  */
 const asQuestion = (q) => (typeof q === "string" ? { text: q } : q);
 
-export function buildUserContent(pageTexts, questions) {
+/** The paper as the first, cached block of a user message. */
+export function paperBlock(pageTexts) {
   const paper = pageTexts.map((t, i) => `=== Page ${i + 1} ===\n${t}`).join("\n\n");
+  // The paper is a stable prefix; caching it makes follow-up requests on the
+  // same paper much cheaper.
+  return { type: "text", text: `<paper>\n${paper}\n</paper>`, cache_control: { type: "ephemeral" } };
+}
+
+export function buildUserContent(pageTexts, questions) {
   const qs = questions
     .map(asQuestion)
     .map((q, i) => {
@@ -82,15 +89,10 @@ export function buildUserContent(pageTexts, questions) {
       return `${i + 1}. ${tags}${q.text}${sel}`;
     })
     .join("\n");
-  return [
-    // The paper is a stable prefix; caching it makes follow-up questions on
-    // the same paper much cheaper.
-    { type: "text", text: `<paper>\n${paper}\n</paper>`, cache_control: { type: "ephemeral" } },
-    { type: "text", text: `Questions:\n${qs}` },
-  ];
+  return [paperBlock(pageTexts), { type: "text", text: `Questions:\n${qs}` }];
 }
 
-function parseJson(text) {
+export function parseJson(text) {
   let body = text.trim();
   const fenced = body.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
   if (fenced) body = fenced[1];
@@ -111,7 +113,7 @@ function parseJson(text) {
   }
 }
 
-const normalizeUrl = (url) => url.trim().replace(/#.*$/, "").replace(/\/+$/, "");
+export const normalizeUrl = (url) => url.trim().replace(/#.*$/, "").replace(/\/+$/, "");
 
 /**
  * Parse and validate the model's reply. Throws an Error describing the first
