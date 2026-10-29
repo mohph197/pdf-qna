@@ -3,7 +3,8 @@
 // highlights, quote navigation, zoom, cache restore, local files, the
 // "open in Paper Q&A" offer, readable viewer URLs, "always open" mode and
 // going back to Chrome's viewer, asking about selected text, and citation
-// previews and paper info with a mocked Semantic Scholar API.
+// previews (linked and plain-text) and paper info with a mocked Semantic
+// Scholar API.
 //
 //   npm run test:e2e
 //   CHROME_PATH=/path/to/chrome npm run test:e2e
@@ -16,6 +17,7 @@ import { strict as assert } from "node:assert";
 import { createServer } from "node:http";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { runInThisContext } from "node:vm";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer-core";
@@ -225,9 +227,20 @@ const LOOKUPS = {
   },
 };
 
+// The paper without its link annotations, like PDFs from archives that strip
+// them: its numbered citations ("[41]") are plain text.
+// pdf-lib is a UMD script (package.json makes .js files ES modules here).
+runInThisContext(await readFile(join(ROOT, "vendor/pdf-lib/pdf-lib.min.js"), "utf8"));
+const { PDFDocument, PDFName } = globalThis.PDFLib;
+const unlinkedDoc = await PDFDocument.load(await readFile(PAPER));
+for (const p of unlinkedDoc.getPages()) p.node.delete(PDFName.of("Annots"));
+// A new file ID, so pdf.js doesn't restore the original's zoom and position.
+unlinkedDoc.context.trailerInfo.ID = undefined;
+const UNLINKED = Buffer.from(await unlinkedDoc.save());
+
 const server = createServer(async (req, res) => {
   res.writeHead(200, { "content-type": "application/pdf" });
-  res.end(await readFile(PAPER));
+  res.end(req.url === "/unlinked.pdf" ? UNLINKED : await readFile(PAPER));
 });
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const base = `http://127.0.0.1:${server.address().port}`;
@@ -573,6 +586,44 @@ try {
     await page.waitForFunction(() => window.__markdown, { timeout: 10000 });
     const md = await page.evaluate(() => window.__markdown);
     assert.ok(md.includes(`## 8. ${SELECTION_QUESTION}\n\nAbout the selected text on p. 1:\n\n> “${selected}”\n`), md.slice(-600));
+  });
+
+  await step("plain-text numbered citations work like links in PDFs without them", async () => {
+    await page.goto(`${viewer}?src=${encodeURIComponent(`${base}/unlinked.pdf`)}`);
+    await page.waitForFunction(() => /12 pages/.test(document.querySelector(".qa-status")?.textContent), { timeout: 30000 });
+    // The centre of "41" in the first "[41]" in the text layer, once the
+    // page has rendered and the point hits that text.
+    const citeAt = () => page.waitForFunction(
+      () => {
+        for (const span of document.querySelectorAll(".textLayer span")) {
+          const i = span.textContent.indexOf("[41]");
+          if (i < 0 || !span.firstChild) continue;
+          span.scrollIntoView({ block: "center" });
+          const range = document.createRange();
+          range.setStart(span.firstChild, i + 1);
+          range.setEnd(span.firstChild, i + 3);
+          const r = range.getBoundingClientRect();
+          const point = { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+          return document.elementFromPoint(point.x, point.y) === span && point;
+        }
+        return null;
+      },
+      { timeout: 10000, polling: 250 },
+    );
+    const { x, y } = await (await citeAt()).jsonValue();
+    await page.mouse.move(x, y);
+    await page.waitForSelector(".textLayer span.qa-cite-text", { timeout: 5000 });
+    const before = await page.evaluate(() => PDFViewerApplication.page);
+    await citeAt();
+    await page.mouse.click(x, y);
+    await page.waitForSelector(".qa-pop .qa-paper-title", { timeout: 10000 });
+    assert.equal(await page.$eval(".qa-pop .qa-paper-title", (e) => e.textContent), VGG);
+    assert.equal(await page.evaluate(() => PDFViewerApplication.page), before, "the click navigated");
+    await page.click(".qa-pop-actions .qa-link");
+    await page.waitForFunction(() => PDFViewerApplication.page === 9, { timeout: 10000 });
+    // Plain text elsewhere isn't a citation.
+    await page.mouse.move(5, 5);
+    assert.equal(await page.$(".textLayer span.qa-cite-text"), null);
   });
 
   await step("local file:// PDFs load (with file access allowed)", async () => {

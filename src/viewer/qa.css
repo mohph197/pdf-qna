@@ -526,3 +526,9 @@ a.qa-web-source {
     --qa-w: 300px;
   }
 }
+
+/* Plain-text numbered citations under the pointer (papers.mjs). */
+.textLayer span.qa-cite-text,
+.textLayer span.qa-cite-text span {
+  cursor: pointer;
+}

@@ -3,11 +3,16 @@
 // button shows the same for the open paper. Lookups go through the service
 // worker (Semantic Scholar, Crossref, OpenAlex, arXiv). Hovering a citation
 // starts its lookup, so the card is usually ready by the time it's clicked.
+// In PDFs whose citations aren't links, plain-text numbered citations ("[12]")
+// work the same way.
 
 import {
   findReferencesStart,
   isCiteDestName,
   isStructuralDestName,
+  numberedCitations,
+  numberedReference,
+  pageLines,
   paperQuery,
   parseReference,
   referenceAt,
@@ -25,6 +30,7 @@ let pop = null; // { el, anchor, kind }
 const cache = new Map(); // JSON query -> Promise<paper|null>
 const citations = new Map(); // JSON destination -> Promise<{ ref, query } | null>
 const CITE_LINK = ".annotationLayer [data-internal-link] a";
+const TEXT_SPAN = ".textLayer span:not(.markedContent):not(.qa-hl):not(.highlight)";
 
 export function initPapers(options) {
   ({ app, getDoc, getSource } = options);
@@ -36,6 +42,7 @@ export function initPapers(options) {
   // Capture phase, so the card replaces pdf.js's own jump to the reference.
   document.addEventListener("click", onLinkClick, true);
   document.addEventListener("pointerover", onLinkHover);
+  document.addEventListener("pointermove", onTextHover);
   document.addEventListener("mousedown", (e) => {
     if (pop && !pop.el.contains(e.target) && !pop.anchorEl?.contains(e.target)) closePop();
   });
@@ -92,7 +99,12 @@ function citationDest(target) {
 function onLinkClick(e) {
   if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
   const link = citationDest(e.target);
-  if (!link) return;
+  if (!link) {
+    // Plain text has no default action to replace; a drag selects text.
+    const cite = getSelection().isCollapsed && textCitation(e);
+    if (cite) showCitation(cite.dest, cite.anchor).catch(() => {});
+    return;
+  }
   e.preventDefault();
   e.stopImmediatePropagation();
   showCitation(link.dest, link.a).catch(() => app.pdfLinkService.goToDestination(link.dest));
@@ -121,7 +133,7 @@ async function showCitation(dest, linkEl) {
   }
   const goToReference = () => {
     closePop();
-    app.pdfLinkService.goToDestination(dest);
+    app.pdfLinkService.goToDestination(cite.goTo ?? dest);
   };
   openPop(linkEl, "cite", () => paperCard(cite.query, { reference: cite.ref.text, goToReference }));
 }
@@ -137,18 +149,32 @@ function resolveCitation(dest) {
 async function findCitation(dest) {
   const pdf = app.pdfDocument;
   const doc = getDoc();
+  if (dest.numbered) {
+    const ref = numberedRef(doc, dest.numbered);
+    if (!ref) return null;
+    return { ref, query: { ...parseReference(ref.text), context: ref.text }, goTo: [ref.page, { name: "XYZ" }, ref.x, ref.y, null] };
+  }
   const explicit = typeof dest === "string" ? await pdf.getDestination(dest) : dest;
   if (!Array.isArray(explicit)) throw new Error("unresolved destination");
   const pageIndex = Number.isInteger(explicit[0]) ? explicit[0] : await pdf.getPageIndex(explicit[0]);
   const [left, top] = destPoint(explicit);
   const ref = referenceAt(doc.pages, pageIndex, left, top);
   // Without a "cite." name, the target must look like a bibliography entry.
-  doc.refsStart ??= findReferencesStart(doc.pages) ?? false;
+  const refsStart = referencesStart(doc);
   const looksLikeReference =
     ref &&
     (isCiteDestName(dest) ||
-      (doc.refsStart && pageIndex >= doc.refsStart.page && /\b(1[89]|20)\d{2}[a-z]?\b/.test(ref.text) && ref.text.length > 30));
+      (refsStart && pageIndex >= refsStart.page && /\b(1[89]|20)\d{2}[a-z]?\b/.test(ref.text) && ref.text.length > 30));
   return looksLikeReference ? { ref, query: { ...parseReference(ref.text), context: ref.text } } : null;
+}
+
+// Where the references section starts ({ page, line, item }), or false.
+function referencesStart(doc) {
+  if (doc.refsStart === undefined) {
+    const start = findReferencesStart(doc.pages);
+    doc.refsStart = start ? { ...start, item: pageLines(doc.pages[start.page].items)[start.line].start } : false;
+  }
+  return doc.refsStart;
 }
 
 function destPoint(explicit) {
@@ -164,6 +190,98 @@ function destPoint(explicit) {
     default:
       return [null, null];
   }
+}
+
+// ---------------------------------------------------------------------------
+// Unlinked numbered citations
+
+function numberedRef(doc, n) {
+  doc.numberedRefs ??= new Map();
+  if (!doc.numberedRefs.has(n)) doc.numberedRefs.set(n, numberedReference(doc.pages, n, referencesStart(doc)));
+  return doc.numberedRefs.get(n);
+}
+
+const spanItems = new WeakMap(); // text-layer span -> text-content item index
+
+// Span i is item i, but pdf.js leaves out items with empty strings.
+function spanItem(span, items) {
+  if (!spanItems.has(span)) {
+    const dom = span.closest(".textLayer").querySelectorAll(TEXT_SPAN);
+    if (dom.length !== items.filter((it) => it.str !== "").length) return null;
+    let next = 0;
+    items.forEach((it, i) => it.str !== "" && spanItems.set(dom[next++], i));
+  }
+  return spanItems.get(span);
+}
+
+// The plain-text numbered citation under the pointer, as { dest, span,
+// anchor }, or null. Only before the references section, on pages without
+// citation links of their own, and when the bibliography has that entry.
+function textCitation(e) {
+  const span = e.target.closest?.(TEXT_SPAN);
+  const doc = getDoc();
+  if (!span || !enabled || !doc) return null;
+  const pageDiv = span.closest(".page");
+  const pageIndex = Number(pageDiv?.dataset.pageNumber) - 1;
+  const refsStart = referencesStart(doc);
+  const items = doc.pages[pageIndex]?.items;
+  if (!refsStart || !items || pageIndex > refsStart.page) return null;
+  const item = spanItem(span, items);
+  if (item == null || (pageIndex === refsStart.page && item >= refsStart.item)) return null;
+
+  const pos = document.caretPositionFromPoint(e.clientX, e.clientY);
+  if (!pos || !span.contains(pos.offsetNode)) return null;
+  const before = document.createRange();
+  before.setStart(span, 0);
+  before.setEnd(pos.offsetNode, pos.offset);
+  const offset = before.toString().length;
+  doc.textCites ??= [];
+  doc.textCites[pageIndex] ??= numberedCitations(items);
+  const cite = doc.textCites[pageIndex].find((c) => c.item === item && c.start <= offset && offset <= c.end);
+  if (!cite || !numberedRef(doc, cite.n)) return null;
+  if ([...pageDiv.querySelectorAll(CITE_LINK)].some((a) => citationDest(a))) return null;
+
+  const range = textRange(span, cite.start, cite.end);
+  const rect = range.getBoundingClientRect();
+  return { dest: { numbered: cite.n }, span, anchor: { getBoundingClientRect: () => rect, contains: (node) => span.contains(node) } };
+}
+
+// A range over characters start..end of an element's text, which highlights
+// may have split into several text nodes.
+function textRange(el, start, end) {
+  const range = document.createRange();
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  let at = 0;
+  let started = false;
+  for (let node; (node = walker.nextNode()); at += node.length) {
+    if (!started && start <= at + node.length) {
+      range.setStart(node, start - at);
+      started = true;
+    }
+    if (started && end <= at + node.length) {
+      range.setEnd(node, end - at);
+      break;
+    }
+  }
+  return range;
+}
+
+let textHover = null; // { span, key } of the citation under the pointer
+let textHoverTimer = null;
+function onTextHover(e) {
+  const cite = !e.buttons && e.target.closest?.(".textLayer") ? textCitation(e) : null;
+  const key = cite && JSON.stringify(cite.dest);
+  if (key === (textHover?.key ?? null)) return;
+  textHover?.span.classList.remove("qa-cite-text");
+  clearTimeout(textHoverTimer);
+  textHover = cite && { span: cite.span, key };
+  if (!cite) return;
+  cite.span.classList.add("qa-cite-text");
+  textHoverTimer = setTimeout(() => {
+    resolveCitation(cite.dest)
+      .then((c) => c && lookup(c.query))
+      .catch(() => {});
+  }, 150);
 }
 
 // ---------------------------------------------------------------------------
