@@ -1,7 +1,7 @@
 // Service worker: detects PDFs, offers the Q&A viewer, and makes all Claude
 // API calls (the viewer page never sees the API key).
 
-import { ClaudeError, askPaper, listModels } from "./claude.js";
+import { ClaudeError, askPaper, findSystems, listModels, writeImplementation } from "./claude.js";
 import { ScholarError, lookupPaper } from "./scholar.js";
 import { getSettings } from "../shared/models.js";
 
@@ -216,15 +216,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
-// The viewer asks questions over a long-lived port. Streaming progress
-// messages keep the service worker alive for the length of the request, and
-// closing the viewer tab aborts the request.
+// The viewer asks questions (and, in its Implement tab, finds the paper's
+// systems and writes implementation prompts) over a long-lived port.
+// Streaming progress messages keep the service worker alive for the length of
+// the request, and closing the viewer tab aborts the request.
+const REQUESTS = {
+  ask: (msg, common) => askPaper({ ...common, questions: msg.questions }),
+  systems: (msg, common) => findSystems(common),
+  implement: (msg, common) =>
+    writeImplementation({ ...common, system: msg.system, others: msg.others, notes: msg.notes, web: !!msg.web }),
+};
+
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "ask") return;
   const controller = new AbortController();
   port.onDisconnect.addListener(() => controller.abort());
   port.onMessage.addListener(async (msg) => {
-    if (msg?.type !== "ask") return;
+    const request = REQUESTS[msg?.type];
+    if (!request) return;
     const post = (m) => {
       try {
         port.postMessage(m);
@@ -235,12 +244,11 @@ chrome.runtime.onConnect.addListener((port) => {
     try {
       const settings = await getSettings();
       let lastProgress = 0;
-      const result = await askPaper({
+      const result = await request(msg, {
         apiKey: settings.apiKey,
         model: settings.model,
         effort: settings.effort,
         pageTexts: msg.pageTexts,
-        questions: msg.questions,
         signal: controller.signal,
         onStatus: (text) => post({ type: "status", text }),
         onDelta: (chars) => {

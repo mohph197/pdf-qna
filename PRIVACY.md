@@ -1,8 +1,8 @@
 # Privacy policy: Paper Q&A
 
-_Last updated: 27 October 2026_
+_Last updated: 29 October 2026_
 
-Paper Q&A is a Chrome extension that lets you ask questions about a PDF and highlights the answers. This policy explains what data it handles. The short version: the extension has no server of its own and collects no analytics. It sends the paper's text and your questions only to Anthropic's API, and only when you press **Find answers**. When you point at or click a citation, or click the paper info button, it looks that one paper up in public scholarly databases (Semantic Scholar, Crossref, OpenAlex and arXiv).
+Paper Q&A is a Chrome extension that lets you ask questions about a PDF and highlights the answers. This policy explains what data it handles. The short version: the extension has no server of its own and collects no analytics. It sends the paper's text and your questions only to Anthropic's API, and only when you press **Find answers** (or, in the Implement tab, **Write implementation prompt**). When you point at or click a citation, or click the paper info button, it looks that one paper up in public scholarly databases (Semantic Scholar, Crossref, OpenAlex and arXiv).
 
 ## What the extension stores on your computer
 
@@ -11,6 +11,7 @@ All of the following stays in your browser's extension storage (`chrome.storage.
 - **Your Anthropic API key**, which you enter on the options page.
 - **Your settings**: chosen model, effort level, what to do when a PDF opens, whether citation previews are on, and your Semantic Scholar API key if you added one.
 - **A cache of your questions and Claude's answers** for each PDF, keyed by a SHA-256 hash of the file. This lets a paper's highlights come back when you reopen it.
+- **A cache of implementation prompts** from the Implement tab for each PDF, keyed the same way: the systems Claude found in the paper, the prompt it wrote, and the notes you typed for it.
 
 You can clear the cache on the options page. Removing the extension deletes all of it.
 
@@ -22,7 +23,9 @@ When you press **Find answers** (or **Re-ask all**), the extension sends this da
 - the questions you typed,
 - your API key, which authenticates the request.
 
-If you tick **Search the web** for a question, Claude may also search the web for it. The searches are run by Anthropic as part of the same API request, so the extension itself still contacts only `api.anthropic.com`. The search queries Claude writes, which can draw on your question and the paper, are handled under Anthropic's terms. Links to the web pages Claude cites are shown in the sidebar; the extension does not open them unless you click one.
+When you press **Write implementation prompt** in the Implement tab, the extension sends the same paper text and API key, plus the notes you typed for the prompt and the name and summary of the systems Claude found in the paper.
+
+If you tick **Search the web** for a question, Claude may also search the web for it. In the Implement tab, **Search the web** also lets Claude fetch web pages, such as the paper's official code repository, by their address. The searches and fetches are run by Anthropic as part of the same API request, so the extension itself still contacts only `api.anthropic.com`. The search queries and page addresses Claude chooses, which can draw on your question and the paper, are handled under Anthropic's terms. Links to the web pages Claude cites are shown in the sidebar; the extension does not open them unless you click one.
 
 Anthropic processes this data under its own terms and privacy policy, which apply to your API account: <https://www.anthropic.com/legal/privacy>. Paper Q&A is an independent project and is not affiliated with or endorsed by Anthropic.
 

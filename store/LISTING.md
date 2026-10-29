@@ -33,6 +33,8 @@ BUILT FOR REAL PAPERS
 • Optionally let Claude search the web for a question. Those answers list the pages they rely on, with links and supporting quotes.
 
 • Export the questions, answers and quotes, with page numbers, as a Markdown file for your notes.
+
+• Want to build what the paper built? The Implement tab writes a prompt for Claude Code that reimplements the paper's model or system: architecture, equations, hyperparameters, training and expected results, with page references and the gaps the paper leaves open. If the paper builds several things, you choose which. Claude can also check the official code and appendix on the web.
 • Answers are cached per file, so reopening a paper brings its highlights back instantly at no extra cost.
 
 READ PAPERS FASTER
@@ -62,7 +64,7 @@ Paper Q&A is an independent project and is not affiliated with or endorsed by An
 | Field | File |
 | --- | --- |
 | Store icon (128×128) | `icons/icon128.png` |
-| Screenshots (1280×800) | `screenshot-2-answers.png`, `screenshot-5-citation.png`, `screenshot-3-zoom.png`, `screenshot-1-ask.png`, `screenshot-4-options.png` |
+| Screenshots (1280×800) | `screenshot-2-answers.png`, `screenshot-5-citation.png`, `screenshot-3-zoom.png`, `screenshot-1-ask.png`, `screenshot-4-options.png` (the store takes five; `screenshot-6-implement.png` shows the Implement tab and can replace one of them) |
 | Small promo tile (440×280) | `promo-small.png` |
 | Marquee promo tile (1400×560) | `promo-marquee.png` |
 
@@ -92,7 +94,7 @@ Paper Q&A is an independent project and is not affiliated with or endorsed by An
 
 **Data usage.** Tick these:
 
-- **Website content.** The text of the PDF the user opens is sent to Anthropic's API when the user asks a question. When the user points at or clicks a citation, or clicks the paper info button, that paper's bibliography entry, title or identifier is sent to public scholarly APIs (Semantic Scholar, Crossref, OpenAlex, arXiv) to look it up.
+- **Website content.** The text of the PDF the user opens is sent to Anthropic's API when the user asks a question or asks for an implementation prompt. When the user points at or clicks a citation, or clicks the paper info button, that paper's bibliography entry, title or identifier is sent to public scholarly APIs (Semantic Scholar, Crossref, OpenAlex, arXiv) to look it up.
 - **Authentication information.** The user's own Anthropic API key is stored locally and sent only to Anthropic's API. An optional Semantic Scholar API key is stored locally and sent only to the Semantic Scholar API.
 
 Then certify all three statements:
