@@ -2,6 +2,13 @@
 
 All notable changes to Paper Q&A are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.3.0](https://github.com/mohph197/pdf-qna/compare/v1.2.0...v1.3.0) (2026-10-29)
+
+
+### Features
+
+* **sidebar:** ask about selected text and switch back to Chrome's PDF viewer ([#14](https://github.com/mohph197/pdf-qna/issues/14)) ([fc8ab34](https://github.com/mohph197/pdf-qna/commit/fc8ab3423067d48e5269e5edd320a419813751be))
+
 ## [1.2.0](https://github.com/mohph197/pdf-qna/compare/v1.1.0...v1.2.0) (2026-10-28)
 
 
