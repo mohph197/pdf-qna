@@ -11,7 +11,18 @@ import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { lookupPaper } from "../background/scholar.js";
-import { idsFromUrl, isCiteDestName, paperQuery, parseReference, referenceAt, titleFits } from "../lib/references.js";
+import {
+  findReferencesStart,
+  idsFromUrl,
+  isCiteDestName,
+  numberedCitations,
+  numberedReference,
+  pageLines,
+  paperQuery,
+  parseReference,
+  referenceAt,
+  titleFits,
+} from "../lib/references.js";
 
 let failed = false;
 const check = async (name, fn) => {
@@ -67,6 +78,64 @@ await check("accepts a found title only when it fits the reference", () => {
   assert.ok(!titleFits("Deep Residual Learning for Image Recognition: A Survey", "Deep residual learning for image recognition"));
   // Hyphenation joined across a line break still fits.
   assert.ok(titleFits("Very Deep Convolutional Networks for Large-Scale Image Recognition", "Very deep convolutional networks for largescale image recognition. In ICLR"));
+});
+
+// A text-content item at (x, y), ending its line unless eol is false.
+const item = (str, x, y, eol = true) => ({ str, hasEOL: eol, transform: [10, 0, 0, 10, x, y], width: str.length * 5, height: 10 });
+
+await check("finds an entry whose anchor sits in the left margin (ICLR)", () => {
+  const pages = [
+    {
+      items: [
+        item("References", 108, 720),
+        item("Kartik Thakral, Rishabh Ranjan, and Mayank Vatsa.", 108, 700),
+        item("ILLUSION: Unveiling truth with a multi-lingual deepfake dataset. In ICLR, 2025.", 118, 689),
+        item("Justus Thies and Matthias Nießner.", 108, 648),
+        item("Face2face: Real-time face capture and reenactment of rgb videos, 2020.", 118, 637),
+      ],
+    },
+  ];
+  assert.equal(referenceAt(pages, 0, 83, 659)?.text, "Justus Thies and Matthias Nießner. Face2face: Real-time face capture and reenactment of rgb videos, 2020.");
+});
+
+await check("finds plain-text numbered citations and their entries", () => {
+  const items = [
+    item("attacks [1]. Others [3–9], [7, 23–", 57, 700),
+    item("27] and [2", 57, 690, false),
+    item("0] but not [x] or [2020a]", 90, 690),
+  ];
+  assert.deepEqual(
+    numberedCitations(items).map(({ n, item: i, start, end }) => [n, i, items[i].str.slice(start, end)]),
+    [
+      [1, 0, "1"],
+      [3, 0, "3"],
+      [9, 0, "9"],
+      [7, 0, "7"],
+      [23, 0, "23"],
+      [27, 1, "27"],
+      [20, 1, "2"], // a number split across items is found where it starts
+    ],
+  );
+  const pages = [
+    { items: [item("Body text citing [2].", 57, 700)] },
+    {
+      items: [
+        item("9. References", 135, 758),
+        item("[1] A. Nautsch, “ASVspoof 2019: spoof-", 62, 742),
+        item("ing countermeasures,” T-BIOM, 2021.", 77, 731),
+        item("[2] J. Yamagishi, “ASVspoof 2021: accelerating progress,”", 62, 685),
+        item("in Proc. ASVspoof 2021 Workshop, 2021.", 77, 674),
+      ],
+    },
+  ];
+  const refsStart = findReferencesStart(pages);
+  assert.deepEqual(numberedReference(pages, 2, refsStart), {
+    text: "[2] J. Yamagishi, “ASVspoof 2021: accelerating progress,” in Proc. ASVspoof 2021 Workshop, 2021.",
+    page: 1,
+    x: 62,
+    y: 695,
+  });
+  assert.equal(numberedReference(pages, 3, refsStart), null);
 });
 
 // --- Lookups, with every API faked -------------------------------------------
@@ -220,6 +289,24 @@ for (const file of files) {
       if (name === "paper") continue;
       assert.equal(refs.get(name)?.query.title, title, name);
     }
+  });
+
+  // The same paper with its links stripped: plain-text numbered citations
+  // ("[41]") must lead to the same entries.
+  const refsStart = findReferencesStart(pages);
+  if (!numberedReference(pages, 1, refsStart)) continue; // author-year bibliography
+  const refsItem = pageLines(pages[refsStart.page].items)[refsStart.line].start;
+  const numbers = new Set(
+    pages
+      .slice(0, refsStart.page + 1)
+      .flatMap((pg, p) => numberedCitations(pg.items).filter((c) => p < refsStart.page || c.item < refsItem))
+      .map((c) => c.n),
+  );
+  await check(`${basename(file)}: resolves its plain-text numbered citations`, () => {
+    const found = [...numbers].map((n) => [n, numberedReference(pages, n, refsStart)]).filter(([, r]) => r);
+    assert.ok(found.length > 40, `only ${found.length} numbered citations resolved`);
+    const linked = new Set([...refs.values()].map((r) => r.text));
+    assert.deepEqual(found.filter(([, r]) => !linked.has(r.text)).map(([n, r]) => `[${n}]: ${r.text}`), [], "entries that differ from the linked ones");
   });
 }
 
