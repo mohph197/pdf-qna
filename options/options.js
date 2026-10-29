@@ -34,6 +34,7 @@ async function init() {
   $("apiKey").value = s.apiKey;
   $("effort").value = s.effort;
   $("openMode").value = s.openMode;
+  $("restoreViewerRow").hidden = s.openMode !== "always";
   $("citationPreviews").checked = s.citationPreviews;
   $("s2ApiKey").value = s.s2ApiKey;
   fillModels(MODELS, s.model);
@@ -79,8 +80,17 @@ $("save").addEventListener("click", async () => {
     citationPreviews: $("citationPreviews").checked,
     s2ApiKey: $("s2ApiKey").value.trim(),
   });
+  $("restoreViewerRow").hidden = $("openMode").value !== "always";
+  $("restoredViewer").textContent = "";
   $("saved").textContent = "Saved.";
   setTimeout(() => ($("saved").textContent = ""), 2000);
+});
+
+// Undo "Always" (for example after clicking it on the banner) in one click.
+$("restoreViewer").addEventListener("click", async () => {
+  await chrome.storage.local.set({ openMode: "ask" });
+  $("openMode").value = "ask";
+  $("restoredViewer").textContent = "Chrome's PDF viewer opens PDFs again; Paper Q&A offers to open them.";
 });
 
 $("clearCache").addEventListener("click", async () => {

@@ -15,7 +15,8 @@ export const COLORS = ["#ffd400", "#4dabf7", "#69db7c", "#ff8787", "#b197fc", "#
 const state = {
   doc: null, // { hash, name, bytes, pages, pageTexts, index }
   src: null, // the PDF's own URL, when it was opened from one
-  questions: [], // [{ id, text, color, web, freeform }]
+  questions: [], // [{ id, text, color, web, freeform, selection: { text, page } | undefined }]
+  selection: null, // { text, page } of the passage the next questions are about
   results: {}, // id -> { answerable, answer, quotes: [{ text, page }], webSources: [{ url, title, quote }], model }
   matches: {}, // id -> [match per quote]
   pending: new Set(), // ids currently being asked
@@ -43,6 +44,7 @@ function buildSidebar() {
       }
     },
   });
+  ui.context = h("div", { class: "qa-context", hidden: true });
   ui.web = h("input", { type: "checkbox", class: "qa-check" });
   ui.freeform = h("input", { type: "checkbox", class: "qa-check" });
   ui.add = h("button", { class: "qa-btn", type: "button", onclick: addQuestionsFromInput, title: "⌘/Ctrl+Enter" }, "Add");
@@ -56,6 +58,7 @@ function buildSidebar() {
   );
   ui.reask = h("button", { class: "qa-btn", type: "button", onclick: () => ask(true) }, "Re-ask all");
   ui.clear = h("button", { class: "qa-btn qa-danger", type: "button", onclick: clearAll }, "Clear");
+  ui.viewerNote = h("div", { class: "qa-viewer-note", hidden: true });
 
   ui.root = h(
     "aside",
@@ -76,6 +79,7 @@ function buildSidebar() {
     h(
       "div",
       { class: "qa-compose" },
+      ui.context,
       ui.input,
       h(
         "div",
@@ -100,13 +104,27 @@ function buildSidebar() {
     ),
     ui.list,
     h("footer", { class: "qa-footer" }, ui.export, ui.markdown, ui.reask, ui.clear),
+    ui.viewerNote,
   );
   ui.reopen = h(
     "button",
     { class: "qa-reopen", type: "button", title: "Show Paper Q&A", hidden: true, onclick: () => toggleSidebar(true) },
     "Q&A",
   );
-  document.body.append(ui.root, ui.reopen);
+  ui.selAsk = h(
+    "button",
+    {
+      class: "qa-sel-ask",
+      type: "button",
+      hidden: true,
+      title: "Ask questions about the selected text",
+      // Keep the selection when the button is pressed.
+      onmousedown: (e) => e.preventDefault(),
+      onclick: attachSelection,
+    },
+    "Ask about selection",
+  );
+  document.body.append(ui.root, ui.reopen, ui.selAsk);
   document.documentElement.classList.add("qa-open");
 }
 
@@ -275,6 +293,7 @@ function render() {
             "✕",
           ),
         ),
+        q.selection ? selectionView(q.selection) : null,
         body,
       );
     }),
@@ -284,6 +303,46 @@ function render() {
       h("p", { class: "qa-empty" }, hasDoc ? "Add a question to get started." : "Open a PDF to ask questions about it."),
     );
   }
+}
+
+// The passage a question is about; clicking it shows its page.
+function selectionView(sel, onRemove) {
+  return h(
+    "div",
+    { class: "qa-about" },
+    h(
+      "button",
+      {
+        type: "button",
+        class: "qa-about-text",
+        title: sel.page ? "Show this page" : null,
+        disabled: !sel.page,
+        onclick: () => app.pdfViewer.scrollPageIntoView({ pageNumber: sel.page }),
+      },
+      h(
+        "span",
+        { class: "qa-about-clamp" },
+        h("span", { class: "qa-page" }, sel.page ? `About p. ${sel.page}` : "About"),
+        h("span", { class: "qa-quote-text" }, `“${sel.text}”`),
+      ),
+    ),
+    onRemove
+      ? h("button", { class: "qa-icon qa-remove", type: "button", title: "Don't ask about this selection", onclick: onRemove }, "✕")
+      : null,
+  );
+}
+
+function renderContext() {
+  ui.context.hidden = !state.selection;
+  ui.context.replaceChildren(state.selection ? selectionView(state.selection, () => setSelection(null)) : "");
+  ui.input.placeholder = state.selection
+    ? "Ask about the selected text…\nOne question per line."
+    : "Ask about this paper…\nOne question per line.";
+}
+
+function setSelection(sel) {
+  state.selection = sel;
+  renderContext();
 }
 
 function hostname(url) {
@@ -308,10 +367,10 @@ async function copyAnswer(button, text) {
 // Questions
 
 let nextId = 1;
-function newQuestion(text, { web = false, freeform = false } = {}) {
+function newQuestion(text, { web = false, freeform = false, selection } = {}) {
   const used = new Set(state.questions.map((q) => q.color));
   const color = COLORS.find((c) => !used.has(c)) ?? COLORS[state.questions.length % COLORS.length];
-  return { id: `q${Date.now().toString(36)}${nextId++}`, text, color, web, freeform };
+  return { id: `q${Date.now().toString(36)}${nextId++}`, text, color, web, freeform, ...(selection ? { selection } : {}) };
 }
 
 function addQuestionsFromInput() {
@@ -324,10 +383,76 @@ function addQuestionsFromInput() {
         .map((l) => l.replace(/^\s*(?:\d+[.)]|[-*•])\s*/, "").trim())
         .filter(Boolean);
   if (!lines.length) return;
-  for (const line of lines) state.questions.push(newQuestion(line, { web: ui.web.checked, freeform }));
+  const selection = state.selection ?? undefined;
+  for (const line of lines) state.questions.push(newQuestion(line, { web: ui.web.checked, freeform, selection }));
   ui.input.value = "";
+  setSelection(null);
   save();
   render();
+}
+
+// ---------------------------------------------------------------------------
+// Asking about selected text
+
+const MAX_SELECTION = 6000; // characters; the whole paper is sent anyway
+let pointerDown = false;
+
+/** The text selected in the PDF's text layer, with the page it starts on. */
+function pdfSelection() {
+  const sel = document.getSelection();
+  if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
+  const range = sel.getRangeAt(0);
+  const elementOf = (node) => (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement);
+  const start = elementOf(range.startContainer);
+  const end = elementOf(range.endContainer);
+  if (!start?.closest("#viewerContainer") || !(start.closest(".textLayer") || end?.closest(".textLayer"))) return null;
+  let text = sel.toString().replace(/\s+/g, " ").trim();
+  if (text.length < 2) return null;
+  if (text.length > MAX_SELECTION) text = `${text.slice(0, MAX_SELECTION)}…`;
+  const page = Number((start.closest(".page") ?? end?.closest(".page"))?.dataset.pageNumber) || null;
+  return { text, page, range };
+}
+
+function updateSelectionButton() {
+  const found = !pointerDown && state.doc ? pdfSelection() : null;
+  const rect = found && [...found.range.getClientRects()].filter((r) => r.width || r.height).at(-1);
+  if (!rect || rect.bottom < 0 || rect.top > innerHeight) {
+    ui.selAsk.hidden = true;
+    return;
+  }
+  ui.selAsk.hidden = false;
+  // Just below the end of the selection, kept inside the PDF area.
+  const area = document.getElementById("viewerContainer").getBoundingClientRect();
+  const { width, height } = ui.selAsk.getBoundingClientRect();
+  const left = Math.max(area.left + 4, Math.min(rect.right - width / 2, area.right - width - 4));
+  const top = rect.bottom + height + 10 < innerHeight ? rect.bottom + 6 : rect.top - height - 6;
+  ui.selAsk.style.setProperty("left", `${left}px`);
+  ui.selAsk.style.setProperty("top", `${top}px`);
+}
+
+function attachSelection() {
+  const found = pdfSelection();
+  if (!found) return;
+  setSelection({ text: found.text, page: found.page });
+  document.getSelection().removeAllRanges();
+  ui.selAsk.hidden = true;
+  if (ui.root.hidden) toggleSidebar(true);
+  ui.input.focus();
+}
+
+function watchSelection() {
+  const container = document.getElementById("viewerContainer");
+  // Wait for the mouse to be released so the button doesn't chase the drag.
+  container.addEventListener("pointerdown", () => {
+    pointerDown = true;
+    ui.selAsk.hidden = true;
+  });
+  document.addEventListener("pointerup", () => {
+    pointerDown = false;
+    updateSelectionButton();
+  });
+  document.addEventListener("selectionchange", updateSelectionButton);
+  container.addEventListener("scroll", updateSelectionButton, { passive: true });
 }
 
 function removeQuestion(id) {
@@ -428,6 +553,7 @@ async function onDocumentLoaded() {
   state.results = {};
   state.matches = {};
   painted.clear();
+  setSelection(null);
   setError(null);
   render();
 
@@ -549,7 +675,7 @@ function ask(all) {
   port.postMessage({
     type: "ask",
     pageTexts: state.doc.pageTexts,
-    questions: targets.map((q) => ({ text: q.text, web: !!q.web, freeform: !!q.freeform })),
+    questions: targets.map((q) => ({ text: q.text, web: !!q.web, freeform: !!q.freeform, selection: q.selection })),
   });
 }
 
@@ -746,7 +872,50 @@ function download(blob, suffix) {
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
   if (changes.apiKey?.newValue && state.error?.code === "no_key") setError(null);
+  if (changes.openMode) renderViewerNote(changes.openMode.newValue);
 });
+
+// In "always" mode, say so and offer the way back to Chrome's PDF viewer.
+let viewerRestored = false; // the way back was taken from this page
+function renderViewerNote(openMode) {
+  const restored = viewerRestored && openMode !== "always";
+  ui.viewerNote.hidden = openMode !== "always" && !restored;
+  if (openMode === "always") {
+    ui.viewerNote.replaceChildren(
+      "Paper Q&A opens every PDF. ",
+      h(
+        "button",
+        {
+          class: "qa-link",
+          type: "button",
+          title: "Stop opening PDFs here automatically (you can change this on the options page)",
+          onclick: () => {
+            viewerRestored = true;
+            chrome.storage.local.set({ openMode: "ask" });
+          },
+        },
+        "Use Chrome's PDF viewer again",
+      ),
+    );
+  } else if (restored) {
+    const src = state.src && /^(https?|file):/i.test(state.src) ? state.src : null;
+    ui.viewerNote.replaceChildren(
+      "Chrome's PDF viewer is the default again.",
+      src ? " " : null,
+      src
+        ? h(
+            "button",
+            {
+              class: "qa-link",
+              type: "button",
+              onclick: async () => chrome.tabs.update((await chrome.tabs.getCurrent()).id, { url: src }),
+            },
+            "Open this PDF there",
+          )
+        : null,
+    );
+  }
+}
 
 async function main() {
   buildSidebar();
@@ -758,8 +927,10 @@ async function main() {
   }
   if (!open) toggleSidebar(false);
   render();
+  getSettings().then((s) => renderViewerNote(s.openMode));
 
   await app.initializedPromise;
+  watchSelection();
   initPapers({ app, getDoc: () => state.doc, getSource: () => state.src });
   app.eventBus.on("fileinputchange", () => {
     // A file opened from the toolbar replaces the one named in the address.

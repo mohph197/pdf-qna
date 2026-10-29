@@ -42,6 +42,9 @@ label.check input {
 .hint + label {
   margin-top: 14px;
 }
+.row[hidden] {
+  display: none;
+}
 .row {
   display: flex;
   gap: 8px;

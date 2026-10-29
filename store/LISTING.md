@@ -26,6 +26,8 @@ BUILT FOR REAL PAPERS
 • Approximate and low-confidence matches are clearly labeled.
 • Export a copy of the PDF with the highlights saved as real PDF annotations, visible in Acrobat, Preview and any other reader.
 
+• Select a passage and ask about it directly: "what does this mean?" or "how is this computed?" is answered about that passage, with the rest of the paper as context.
+
 • Need something other than a short answer? Ask for a free-form answer, such as a table of every dataset or the hyperparameters as JSON, and Claude follows your format, quoting the paper only where it helps.
 
 • Optionally let Claude search the web for a question. Those answers list the pages they rely on, with links and supporting quotes.
@@ -36,7 +38,7 @@ BUILT FOR REAL PAPERS
 READ PAPERS FASTER
 • Click a citation to preview the cited paper: title, authors, venue, citation count, a short summary and the abstract, with links to Google Scholar, arXiv and the PDF. Open the cited paper in Paper Q&A with one click.
 • The paper info button shows the same for the paper you're reading, with its BibTeX.
-• Make Paper Q&A your default PDF viewer: PDFs open in it straight away, and the address bar still shows the PDF's own URL.
+• Make Paper Q&A your default PDF viewer: PDFs open in it straight away, and the address bar still shows the PDF's own URL. Switching back to Chrome's viewer takes one click.
 • Works with local files too (enable "Allow access to file URLs").
 
 YOUR KEY, YOUR DATA
