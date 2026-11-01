@@ -13,6 +13,7 @@ import {
   parseImplementation,
   parseSystems,
 } from "../shared/implement.js";
+import { askClaudeCode } from "./claude-code.js";
 
 const API = "https://api.anthropic.com/v1";
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
@@ -252,8 +253,8 @@ async function streamWithRetry(args, onStatus) {
   }
 }
 
-function checkRequest(apiKey, model, pageTexts) {
-  if (!apiKey) {
+function checkRequest({ apiKey, backend }, model, pageTexts) {
+  if (!apiKey && backend !== "claude-code") {
     throw new ClaudeError("no_key", "No Anthropic API key set. Add one on the options page.");
   }
   const info = modelInfo(model);
@@ -279,9 +280,13 @@ function checkRequest(apiKey, model, pageTexts) {
  * @param {string} p.retryHint  added to the retry request
  * @param {string} p.refusal  error message when Claude declines
  * @param {string} p.cutOffHint  added to the error when a cut-off reply couldn't be used
+ * @param {string} [p.backend]  "claude-code" sends the request through Claude Code instead
  * @returns {Promise<{ data, model, usage, webSearches, webFetches }>}
  */
-async function askJson({ apiKey, model, effort, system, schema, content, tools, maxTokens, parse, status, retryHint, refusal, cutOffHint, signal, onStatus, onDelta }) {
+async function askJson({ apiKey, backend, model, effort, system, schema, content, tools, maxTokens, parse, status, retryHint, refusal, cutOffHint, signal, onStatus, onDelta }) {
+  if (backend === "claude-code") {
+    return askClaudeCode({ model, effort, system, schema, content, web: tools.length > 0, parse, status, retryHint, refusal, signal, onStatus, onDelta });
+  }
   const info = modelInfo(model);
   const betas = info.fallbacks ? [FALLBACK_BETA] : [];
   let useSchema = true;
@@ -359,12 +364,13 @@ async function askJson({ apiKey, model, effort, system, schema, content, tools, 
  *   selection: a passage the reader selected that the question is about
  * @returns {Promise<{answers, model, usage, webSearches}>}
  */
-export async function askPaper({ apiKey, model, effort, pageTexts, questions, signal, onStatus, onDelta }) {
-  const info = checkRequest(apiKey, model, pageTexts);
+export async function askPaper({ apiKey, backend, model, effort, pageTexts, questions, signal, onStatus, onDelta }) {
+  const info = checkRequest({ apiKey, backend }, model, pageTexts);
   const webAllowed = questions.map((q) => !!q.web);
   const freeform = questions.map((q) => !!q.freeform);
   const { data, ...rest } = await askJson({
     apiKey,
+    backend,
     model,
     effort,
     system: SYSTEM_PROMPT,
@@ -389,10 +395,11 @@ export async function askPaper({ apiKey, model, effort, pageTexts, questions, si
  * List the systems (models, architectures, algorithms…) a paper implements.
  * @returns {Promise<{systems: {name, kind, summary, pages}[], model, usage}>}
  */
-export async function findSystems({ apiKey, model, effort, pageTexts, signal, onStatus, onDelta }) {
-  checkRequest(apiKey, model, pageTexts);
+export async function findSystems({ apiKey, backend, model, effort, pageTexts, signal, onStatus, onDelta }) {
+  checkRequest({ apiKey, backend }, model, pageTexts);
   const { data, ...rest } = await askJson({
     apiKey,
+    backend,
     model,
     effort,
     system: SYSTEMS_PROMPT,
@@ -421,10 +428,11 @@ export async function findSystems({ apiKey, model, effort, pageTexts, signal, on
  * @param {boolean} [p.web]  may use web search and web fetch
  * @returns {Promise<{prompt, webSources, model, usage, webSearches, webFetches}>}
  */
-export async function writeImplementation({ apiKey, model, effort, pageTexts, system, others, notes, web, signal, onStatus, onDelta }) {
-  const info = checkRequest(apiKey, model, pageTexts);
+export async function writeImplementation({ apiKey, backend, model, effort, pageTexts, system, others, notes, web, signal, onStatus, onDelta }) {
+  const info = checkRequest({ apiKey, backend }, model, pageTexts);
   const { data, ...rest } = await askJson({
     apiKey,
+    backend,
     model,
     effort,
     system: IMPLEMENT_PROMPT,

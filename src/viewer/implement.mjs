@@ -2,8 +2,11 @@
 // paper built. Claude first lists the systems (models, architectures,
 // algorithms…) the paper implements; when there is more than one, the reader
 // picks which. The prompt may draw on web search and web fetch (official code,
-// appendices). Results are cached per PDF, next to the Q&A cache.
+// appendices). Results are cached per PDF, next to the Q&A cache. With the
+// Claude Code backend, the finished prompt is handed straight to Claude Code
+// in a new project folder.
 
+import { SETTINGS_ERRORS, getSettings } from "../../shared/models.js";
 import { h } from "./dom.js";
 
 const state = {
@@ -11,9 +14,10 @@ const state = {
   systems: null, // [{ name, kind, summary, pages }] once found
   chosen: null, // index into systems of the prompt shown or being written
   choosing: false, // the list of systems is shown to pick from
-  result: null, // { prompt, webSources: [{ url, title }], model, webSearches, webFetches }
-  busy: null, // "systems" | "prompt" while a request runs
+  result: null, // { prompt, webSources: [{ url, title }], model, webSearches, webFetches, project }
+  busy: null, // "systems" | "prompt" | "launch" while a request runs
   port: null,
+  claudeCode: false, // the Claude Code backend is on: start it on the prompt
 };
 const ui = {};
 
@@ -61,8 +65,17 @@ export function initImplement() {
     ui.body,
   );
   setStatus("");
+  getSettings().then((s) => setClaudeCode(s.backend === "claude-code"));
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && changes.backend) setClaudeCode(changes.backend.newValue === "claude-code");
+  });
   render();
   return ui.panel;
+}
+
+function setClaudeCode(on) {
+  state.claudeCode = on;
+  render();
 }
 
 /** Called whenever another PDF is opened (doc is null while it loads). */
@@ -116,7 +129,7 @@ function start() {
 function request(type, body, onResult) {
   const doc = state.doc;
   setError(null);
-  state.busy = type === "systems" ? "systems" : "prompt";
+  state.busy = type === "implement" ? "prompt" : type;
   render();
   const port = chrome.runtime.connect({ name: "ask" });
   state.port = port;
@@ -200,8 +213,27 @@ function writePrompt(index) {
         msg.webFetches ? `${msg.webFetches} page${msg.webFetches === 1 ? "" : "s"} fetched` : "",
       ].filter(Boolean);
       setStatus(`Written by ${msg.model}${cached}${web.length ? ` · ${web.join(" · ")}` : ""}`);
+      if (state.claudeCode) queueMicrotask(startClaudeCode);
     },
   );
+}
+
+// Creates a project folder with the prompt and the paper, and starts Claude
+// Code on it in a terminal window.
+function startClaudeCode() {
+  if (!state.doc || !state.result || state.busy) return;
+  const result = state.result;
+  const system = state.chosen != null ? state.systems?.[state.chosen] : null;
+  request("launch", { name: system?.name ?? state.doc.name.replace(/\.pdf$/i, ""), prompt: result.prompt, pdf: base64(state.doc.bytes) }, (msg) => {
+    result.project = msg.dir;
+    setStatus(`Claude Code started in ${msg.dir}`);
+  });
+}
+
+function base64(bytes) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
 }
 
 // ---------------------------------------------------------------------------
@@ -216,7 +248,7 @@ function setError(err) {
   ui.error.replaceChildren();
   if (!err) return;
   ui.error.append(h("span", {}, err.message));
-  if (["no_key", "auth", "model", "permission"].includes(err.code)) {
+  if (SETTINGS_ERRORS.has(err.code)) {
     ui.error.append(
       " ",
       h("button", { class: "qa-link", type: "button", onclick: () => chrome.runtime.openOptionsPage() }, "Open settings"),
@@ -229,11 +261,15 @@ function render() {
   ui.start.textContent =
     state.busy === "systems"
       ? "Reading the paper…"
-      : state.busy
-        ? "Writing…"
-        : state.result
-          ? "Write again"
-          : "Write implementation prompt";
+      : state.busy === "launch"
+        ? "Starting Claude Code…"
+        : state.busy
+          ? "Writing…"
+          : state.result
+            ? "Write again"
+            : state.claudeCode
+              ? "Write prompt & start Claude Code"
+              : "Write implementation prompt";
   ui.body.replaceChildren(...bodyContent());
 }
 
@@ -266,7 +302,8 @@ function bodyContent() {
   }
   if (!state.result) return [h("p", { class: "qa-empty" }, "Press the button to read the paper and write the prompt.")];
 
-  const copy = h("button", { class: "qa-btn qa-primary", type: "button", onclick: (e) => copyPrompt(e.currentTarget) }, "Copy prompt");
+  const primary = state.claudeCode ? "qa-btn" : "qa-btn qa-primary";
+  const copy = h("button", { class: primary, type: "button", onclick: (e) => copyPrompt(e.currentTarget) }, "Copy prompt");
   return [
     h(
       "div",
@@ -281,7 +318,21 @@ function bodyContent() {
       { class: "qa-impl-actions" },
       copy,
       h("button", { class: "qa-btn", type: "button", onclick: downloadPrompt, title: "Save the prompt as a Markdown file" }, "Download .md"),
+      state.claudeCode
+        ? h(
+            "button",
+            {
+              class: "qa-btn qa-primary qa-impl-launch",
+              type: "button",
+              disabled: !!state.busy,
+              onclick: startClaudeCode,
+              title: "Create a project folder with this prompt and the paper, and start Claude Code on it in a terminal window",
+            },
+            "Start in Claude Code",
+          )
+        : null,
     ),
+    state.result.project ? h("p", { class: "qa-impl-hint qa-impl-project" }, `Claude Code was started in ${state.result.project}.`) : null,
     h("pre", { class: "qa-impl-prompt", tabindex: 0 }, state.result.prompt),
     state.result.webSources?.length
       ? h(

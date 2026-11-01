@@ -10,6 +10,36 @@
       <h1>Paper Q&amp;A settings</h1>
 
       <section>
+        <label for="backend">How to reach Claude</label>
+        <select id="backend">
+          <option value="api">Anthropic API, with an API key</option>
+          <option value="claude-code">Claude Code on this computer (your Claude Code login)</option>
+        </select>
+        <div id="claudeCodeSetup" hidden>
+          <p class="hint">
+            Requests go to your own <a href="https://claude.com/claude-code" target="_blank" rel="noreferrer">Claude Code</a>
+            installation instead of the API, so no API key is needed and usage counts against your Claude Code plan. The
+            Implement tab can then start Claude Code on the prompt it writes. This needs a small helper on your computer
+            (macOS or Linux, Node.js 20+, Claude Code logged in). In a terminal, from the Paper Q&amp;A source folder, run:
+          </p>
+          <div class="row">
+            <input id="installCommand" type="text" readonly spellcheck="false" />
+            <button id="copyInstall" type="button">Copy</button>
+          </div>
+          <div class="row">
+            <button id="checkClaudeCode" type="button">Check Claude Code</button>
+            <span id="claudeCodeStatus" class="hint" role="status"></span>
+          </div>
+          <label for="claudeCodeDir">Folder for implementation projects</label>
+          <input id="claudeCodeDir" type="text" spellcheck="false" placeholder="~/paper-qa-projects" />
+          <p class="hint">
+            When the Implement tab has written a prompt, it creates a new folder here with the prompt and the paper, and
+            starts Claude Code on it in a terminal window.
+          </p>
+        </div>
+      </section>
+
+      <section id="apiKeySection">
         <label for="apiKey">Anthropic API key</label>
         <div class="row">
           <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…" />

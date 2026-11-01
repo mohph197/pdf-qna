@@ -43,6 +43,9 @@ jobs:
       - name: Citation reference test on real papers
         run: npm run test:references
 
+      - name: Claude Code helper test (fake claude)
+        run: npm run test:native-host
+
       - name: Build store package
         run: npm run package
 

@@ -3,8 +3,10 @@
 // highlights, quote navigation, zoom, cache restore, local files, the
 // "open in Paper Q&A" offer, readable viewer URLs, "always open" mode and
 // going back to Chrome's viewer, asking about selected text, the Implement
-// tab's implementation prompts, and citation previews (linked and plain-text)
-// and paper info with a mocked Semantic Scholar API.
+// tab's implementation prompts, citation previews (linked and plain-text)
+// and paper info with a mocked Semantic Scholar API, and the Claude Code
+// backend through the real native helper with a fake claude
+// (tests/fake-claude.mjs).
 //
 //   npm run test:e2e
 //   CHROME_PATH=/path/to/chrome npm run test:e2e
@@ -15,7 +17,8 @@
 
 import { strict as assert } from "node:assert";
 import { createServer } from "node:http";
-import { existsSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { readFile } from "node:fs/promises";
 import { runInThisContext } from "node:vm";
 import { dirname, join, resolve } from "node:path";
@@ -92,6 +95,7 @@ const ANSWERS = {
     },
   ],
 };
+const CLAUDE_CODE_QUESTION = "What error does the ensemble reach, per Claude Code?";
 const QUESTIONS = [
   "Why do deeper plain networks perform worse?",
   "What error does the ensemble reach?",
@@ -289,8 +293,16 @@ const server = createServer(async (req, res) => {
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const base = `http://127.0.0.1:${server.address().port}`;
 
+// The Claude Code helper is registered in the profile's own
+// NativeMessagingHosts folder once the extension ID is known.
+const TMP = mkdtempSync(join(tmpdir(), "paper-qa-e2e-"));
+const PROFILE = join(TMP, "profile");
+const PROJECTS = join(TMP, "projects");
+const CLAUDE_LOG = join(TMP, "claude.log");
+
 const browser = await puppeteer.launch({
   executablePath: CHROME,
+  userDataDir: PROFILE,
   headless: true,
   pipe: true,
   enableExtensions: true,
@@ -311,6 +323,7 @@ const step = async (name, fn) => {
 try {
   const id = await browser.installExtension(EXTENSION);
   const viewer = `chrome-extension://${id}/vendor/pdfjs/web/viewer.html`;
+  registerClaudeCodeHelper(id);
 
   // Mock api.anthropic.com inside the service worker.
   const swTarget = await browser.waitForTarget((t) => t.type() === "service_worker" && t.url().includes(id));
@@ -824,9 +837,100 @@ try {
     }
   });
 
+  await step("the Claude Code backend answers questions and starts Claude Code on implementation prompts", async () => {
+    const runs = () => (existsSync(CLAUDE_LOG) ? readFileSync(CLAUDE_LOG, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : []);
+    const before = apiCalls.length;
+    await page.goto(`chrome-extension://${id}/options/options.html`);
+    await page.waitForSelector("#model option");
+    await page.select("#backend", "claude-code");
+    assert.equal(await page.$eval("#apiKeySection", (e) => e.hidden), true, "the API key isn't needed");
+    assert.equal(await page.$eval("#installCommand", (e) => e.value), `./native-host/install.sh ${id}`);
+    await page.click("#checkClaudeCode");
+    await page.waitForFunction(() => !/^Checking/.test(document.querySelector("#claudeCodeStatus").textContent), { timeout: 15000 });
+    assert.match(await page.$eval("#claudeCodeStatus", (e) => e.textContent), /^✓ Found Claude Code 9\.9\.9 at .*\/claude\.$/);
+    await page.$eval("#claudeCodeDir", (e) => (e.value = ""));
+    await page.type("#claudeCodeDir", PROJECTS);
+    await page.click("#save");
+    await page.waitForFunction(() => document.querySelector("#saved").textContent === "Saved.");
+
+    await page.goto(`${viewer}?src=${encodeURIComponent(`${base}/resnet.pdf`)}`);
+    await page.waitForFunction(() => /12 pages/.test(document.querySelector(".qa-status")?.textContent), { timeout: 30000 });
+    assert.doesNotMatch(await status(), /\$/, "no API cost with Claude Code");
+    await page.type(".qa-input", CLAUDE_CODE_QUESTION);
+    await page.click(".qa-compose .qa-btn:not(.qa-primary)");
+    await page.click(".qa-primary");
+    await page.waitForFunction(() => /Answered by/.test(document.querySelector(".qa-status").textContent), { timeout: 30000 });
+    const ask = runs().at(-1);
+    assert.match(ask.stdin, /^<paper>/);
+    assert.match(ask.stdin, new RegExp(`Questions:\\n1\\. ${CLAUDE_CODE_QUESTION.replace(/[?.]/g, "\\$&")}$`));
+    assert.equal(ask.args[ask.args.indexOf("--model") + 1], "claude-opus-5-5");
+    assert.equal(ask.args[ask.args.indexOf("--tools") + 1], "");
+    const last = await page.$$eval(".qa-card", (els) => els.at(-1).querySelector(".qa-answer").textContent);
+    assert.equal(last, ANSWERS.answers[1].answer);
+
+    await page.click(".qa-tab:nth-child(2)");
+    await page.waitForSelector(".qa-impl-launch");
+    await page.click(".qa-impl-launch");
+    await page.waitForSelector(".qa-impl-project", { timeout: 30000 });
+    const first = join(PROJECTS, "residual-networks-for-cifar-10");
+    assert.equal(await page.$eval(".qa-impl-project", (e) => e.textContent), `Claude Code was started in ${first}.`);
+    assert.deepEqual(readdirSync(first).sort(), ["IMPLEMENTATION_PROMPT.md", "paper.pdf"]);
+    assert.equal(readFileSync(join(first, "IMPLEMENTATION_PROMPT.md"), "utf8"), `${IMPL_PROMPT}\n`);
+    assert.ok(readFileSync(join(first, "paper.pdf")).equals(await readFile(PAPER)), "the paper must be copied as is");
+
+    // Writing again goes through Claude Code, with the web, and starts it.
+    assert.equal(await page.$eval(".qa-impl .qa-compose .qa-primary", (e) => e.textContent), "Write again");
+    await page.click(".qa-impl .qa-compose .qa-primary");
+    const second = `${first}-2`;
+    await page.waitForFunction((t) => document.querySelector(".qa-impl-project")?.textContent === t, { timeout: 30000 }, `Claude Code was started in ${second}.`);
+    const write = runs().at(-1);
+    assert.equal(write.args[write.args.indexOf("--tools") + 1], "WebSearch,WebFetch");
+    assert.match(write.stdin, /<target>\[web search allowed\] Residual networks for CIFAR-10/);
+    const sources = await page.$$eval(".qa-impl-sources a", (els) => els.map((e) => e.href));
+    assert.deepEqual(sources, [CODE_URL]);
+    assert.match(await page.$eval(".qa-impl-status", (e) => e.textContent), /Claude Code started in .*-2$/);
+    assert.equal(apiCalls.length, before, "the Claude API must not be called");
+    await page.evaluate(() => chrome.storage.local.set({ backend: "api" }));
+  });
+
   await step("no page errors", async () => assert.deepEqual(errors, []));
 } finally {
   await browser.close();
   server.close();
+  rmSync(TMP, { recursive: true, force: true });
+}
+
+function registerClaudeCodeHelper(id) {
+  const bin = join(TMP, "bin");
+  mkdirSync(bin);
+  const exe = (name, body) => {
+    writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`);
+    chmodSync(join(bin, name), 0o755);
+    return join(bin, name);
+  };
+  const replies = join(TMP, "replies.json");
+  writeFileSync(
+    replies,
+    JSON.stringify({
+      answers: [{ ...ANSWERS.answers[1], question_index: 1, web_sources: [] }],
+      prompt: IMPL_PROMPT,
+      web_sources: [{ url: CODE_URL, title: "Official code" }],
+    }),
+  );
+  const claude = exe("claude", `exec "${process.execPath}" "${join(ROOT, "tests/fake-claude.mjs")}" "$@"`);
+  const terminal = exe("terminal", "exit 0");
+  const host = exe(
+    "host",
+    [
+      `export CLAUDE_PATH="${claude}" PAPER_QA_TERMINAL="${terminal}"`,
+      `export FAKE_CLAUDE_REPLIES="${replies}" FAKE_CLAUDE_LOG="${CLAUDE_LOG}" FAKE_CLAUDE_URL="${CODE_URL}"`,
+      `exec "${process.execPath}" "${join(ROOT, "native-host/paper-qa-host.mjs")}" "$@"`,
+    ].join("\n"),
+  );
+  mkdirSync(join(PROFILE, "NativeMessagingHosts"), { recursive: true });
+  writeFileSync(
+    join(PROFILE, "NativeMessagingHosts/com.paperqa.claude_code.json"),
+    JSON.stringify({ name: "com.paperqa.claude_code", description: "test", path: host, type: "stdio", allowed_origins: [`chrome-extension://${id}/`] }),
+  );
 }
 process.exit(failed ? 1 : 0);
