@@ -2,6 +2,13 @@
 
 All notable changes to Paper Q&A are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.5.0](https://github.com/mohph197/pdf-qna/compare/v1.4.0...v1.5.0) (2026-11-01)
+
+
+### Features
+
+* use Claude Code instead of an API key, and start it from the Implement tab ([#20](https://github.com/mohph197/pdf-qna/issues/20)) ([b2dc292](https://github.com/mohph197/pdf-qna/commit/b2dc292c27bbaff6881dec410df6d68eb88e8898))
+
 ## [1.4.0](https://github.com/mohph197/pdf-qna/compare/v1.3.1...v1.4.0) (2026-10-29)
 
 
