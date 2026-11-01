@@ -30,13 +30,18 @@ export function modelInfo(id) {
 }
 
 export const DEFAULT_SETTINGS = {
+  backend: "api", // "api" | "claude-code": the Claude API with a key, or Claude Code on this computer
   apiKey: "",
   model: DEFAULT_MODEL,
   effort: DEFAULT_EFFORT,
   openMode: "ask", // "ask" | "always" | "never": what to do when a PDF opens
   citationPreviews: true, // clicking a citation shows the cited paper
   s2ApiKey: "", // optional Semantic Scholar API key for paper lookups
+  claudeCodeDir: "~/paper-qa-projects", // where the Implement tab creates Claude Code projects
 };
+
+// Error codes the viewer answers with an "Open settings" button.
+export const SETTINGS_ERRORS = new Set(["no_key", "auth", "model", "permission", "claude_code_setup", "claude_code_missing", "claude_code_auth"]);
 
 export async function getSettings() {
   const stored = await chrome.storage.local.get(Object.keys(DEFAULT_SETTINGS));

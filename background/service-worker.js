@@ -1,7 +1,9 @@
 // Service worker: detects PDFs, offers the Q&A viewer, and makes all Claude
-// API calls (the viewer page never sees the API key).
+// API calls (the viewer page never sees the API key), or, with the Claude Code
+// backend, talks to the native helper that runs Claude Code.
 
 import { ClaudeError, askPaper, findSystems, listModels, writeImplementation } from "./claude.js";
+import { claudeCodeStatus, launchClaudeCode } from "./claude-code.js";
 import { ScholarError, lookupPaper } from "./scholar.js";
 import { getSettings } from "../shared/models.js";
 
@@ -214,10 +216,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .catch((e) => sendResponse({ ok: false, error: { code: e.code ?? "error", message: e.message } }));
     return true; // async response
   }
+  if (msg?.type === "claudeCodeStatus") {
+    claudeCodeStatus()
+      .then((status) => sendResponse({ ok: true, ...status }))
+      .catch((e) => sendResponse({ ok: false, error: { code: e.code ?? "error", message: e.message } }));
+    return true; // async response
+  }
 });
 
 // The viewer asks questions (and, in its Implement tab, finds the paper's
-// systems and writes implementation prompts) over a long-lived port.
+// systems, writes implementation prompts and starts Claude Code on them) over
+// a long-lived port.
 // Streaming progress messages keep the service worker alive for the length of
 // the request, and closing the viewer tab aborts the request.
 const REQUESTS = {
@@ -225,6 +234,10 @@ const REQUESTS = {
   systems: (msg, common) => findSystems(common),
   implement: (msg, common) =>
     writeImplementation({ ...common, system: msg.system, others: msg.others, notes: msg.notes, web: !!msg.web }),
+  launch: (msg, common, settings) => {
+    if (settings.backend !== "claude-code") throw new ClaudeError("claude_code_setup", "Turn on the Claude Code backend on the options page first.");
+    return launchClaudeCode({ ...common, dir: settings.claudeCodeDir, name: msg.name, prompt: msg.prompt, pdf: msg.pdf });
+  },
 };
 
 chrome.runtime.onConnect.addListener((port) => {
@@ -246,6 +259,7 @@ chrome.runtime.onConnect.addListener((port) => {
       let lastProgress = 0;
       const result = await request(msg, {
         apiKey: settings.apiKey,
+        backend: settings.backend,
         model: settings.model,
         effort: settings.effort,
         pageTexts: msg.pageTexts,
@@ -257,7 +271,7 @@ chrome.runtime.onConnect.addListener((port) => {
             post({ type: "progress", chars });
           }
         },
-      });
+      }, settings);
       post({ type: "result", ...result });
     } catch (e) {
       const err = e instanceof ClaudeError ? e : new ClaudeError("error", e?.message ?? String(e));

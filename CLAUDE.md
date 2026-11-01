@@ -12,7 +12,8 @@ Chrome MV3 extension: a pdf.js viewer with a sidebar that asks Claude about the 
    - Always run `npm run check`.
    - If you touched `lib/matcher.js` or text extraction in `src/viewer/qa.mjs`, run `npm run test:matcher`. The pass count must not drop below the README's figure; currently 1250/1260.
    - If you touched `lib/references.js` (citation previews, paper info), run `npm run test:references`.
-   - If you touched the viewer, background, options, manifest or `vendor/`, run `npm run test:e2e`.
+   - If you touched `native-host/` or `background/claude-code.js`, run `npm run test:native-host`.
+   - If you touched the viewer, background, options, manifest, `native-host/` or `vendor/`, run `npm run test:e2e`.
    - Add or extend tests for new behavior. The end-to-end test mocks the Claude API in the service worker; tests must never make real API calls or use a real key.
 4. **Commit** with Conventional Commit messages (see below). End each commit message with the `Co-Authored-By` trailer.
 5. **Push and open a PR**: `git push -u origin <branch>`, then `gh pr create --base main --title "<conventional title>" --body …`. The body says what changed, why, and how it was tested, and ends with the Claude Code footer.
@@ -52,6 +53,7 @@ An optional scope is welcome, for example `fix(matcher): …` or `feat(sidebar):
 - **Text layer alignment.** Highlights map text-content item `i` to span `i`. Text must be extracted with `{ includeMarkedContent: true, disableNormalization: true }`, keeping only items that have `str`. pdf.js doesn't put empty-string items in the DOM. If you change extraction, check that the viewer logs no "text layer has N spans" warnings.
 - **The viewer's CSP has no inline styles.** Build DOM with the `h()` helper in `qa.mjs` and set styles through `el.style.setProperty(...)`, never with `style="…"` in HTML strings.
 - **pdf.js detaches buffers.** Pass `bytes.slice()` to `PDFViewerApplication.open`.
+- **Claude Code backend.** With `backend: "claude-code"`, requests go through `chrome.runtime.connectNative` to `native-host/paper-qa-host.mjs`, which runs the user's `claude -p`. Tests use `tests/fake-claude.mjs`; never run the real `claude` in tests.
 - **The API key stays in the service worker.** Only `background/` talks to `api.anthropic.com`; the viewer page never sees the key. Keep the `anthropic-dangerous-direct-browser-access` header, structured output, and server-side `fallbacks`.
 - **Model IDs** live in `shared/models.js`. Use exact current IDs from Anthropic's docs; never guess or add date suffixes.
 - **End-to-end test quirk.** When the extension navigates a tab itself, Puppeteer's handle for that tab goes stale. Check tab URLs through `chrome.tabs.query` from an extension page instead, and bound any interaction with that tab with a timeout.

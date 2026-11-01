@@ -29,7 +29,8 @@
     "scripting",
     "webRequest",
     "notifications",
-    "contextMenus"
+    "contextMenus",
+    "nativeMessaging"
   ],
   "host_permissions": [
     "<all_urls>"

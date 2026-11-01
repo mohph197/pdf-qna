@@ -18,9 +18,20 @@ function fillModels(models, selected) {
 
 function updateModelHint() {
   const info = modelInfo($("model").value);
-  $("modelHint").textContent = info.input
-    ? `Input costs about $${info.input} per million tokens; a typical 15-page paper is ~15k tokens.`
-    : "";
+  $("modelHint").textContent =
+    $("backend").value === "claude-code"
+      ? "Claude Code runs this model; usage counts against your Claude Code plan."
+      : info.input
+        ? `Input costs about $${info.input} per million tokens; a typical 15-page paper is ~15k tokens.`
+        : "";
+}
+
+function updateBackend() {
+  const claudeCode = $("backend").value === "claude-code";
+  $("claudeCodeSetup").hidden = !claudeCode;
+  $("apiKeySection").hidden = claudeCode;
+  $("loadModels").hidden = claudeCode;
+  updateModelHint();
 }
 
 async function refreshCacheInfo() {
@@ -31,6 +42,9 @@ async function refreshCacheInfo() {
 
 async function init() {
   const s = await getSettings();
+  $("backend").value = s.backend;
+  $("installCommand").value = `./native-host/install.sh ${chrome.runtime.id}`;
+  $("claudeCodeDir").value = s.claudeCodeDir;
   $("apiKey").value = s.apiKey;
   $("effort").value = s.effort;
   $("openMode").value = s.openMode;
@@ -38,6 +52,7 @@ async function init() {
   $("citationPreviews").checked = s.citationPreviews;
   $("s2ApiKey").value = s.s2ApiKey;
   fillModels(MODELS, s.model);
+  updateBackend();
   refreshCacheInfo();
   chrome.extension.isAllowedFileSchemeAccess((allowed) => {
     $("fileAccess").textContent = allowed ? " ✓ Currently allowed." : " ✗ Currently not allowed.";
@@ -45,6 +60,26 @@ async function init() {
 }
 
 $("model").addEventListener("change", updateModelHint);
+$("backend").addEventListener("change", updateBackend);
+
+$("copyInstall").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText($("installCommand").value);
+    $("copyInstall").textContent = "Copied";
+  } catch {
+    $("installCommand").select();
+  }
+  setTimeout(() => ($("copyInstall").textContent = "Copy"), 1500);
+});
+
+$("checkClaudeCode").addEventListener("click", async () => {
+  const status = $("claudeCodeStatus");
+  status.textContent = "Checking…";
+  const res = await chrome.runtime.sendMessage({ type: "claudeCodeStatus" });
+  status.textContent = res?.ok
+    ? `✓ Found ${res.version ? `Claude Code ${res.version.replace(/\s*\(Claude Code\)$/, "")}` : "Claude Code"} at ${res.claude}.`
+    : `✗ ${res?.error?.message ?? "Request failed."}`;
+});
 
 $("toggleKey").addEventListener("click", () => {
   const input = $("apiKey");
@@ -73,6 +108,8 @@ $("loadModels").addEventListener("click", async () => {
 
 $("save").addEventListener("click", async () => {
   await chrome.storage.local.set({
+    backend: $("backend").value,
+    claudeCodeDir: $("claudeCodeDir").value.trim() || "~/paper-qa-projects",
     apiKey: $("apiKey").value.trim(),
     model: $("model").value,
     effort: $("effort").value,

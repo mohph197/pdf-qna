@@ -2,7 +2,7 @@
 // per-PDF cache and annotated export.
 
 import { buildIndex, matchQuote, pageText } from "../../lib/matcher.js";
-import { getSettings, modelInfo } from "../../shared/models.js";
+import { SETTINGS_ERRORS, getSettings, modelInfo } from "../../shared/models.js";
 import { exportAnnotated } from "./export.js";
 import { answersToMarkdown } from "./markdown.js";
 import { h } from "./dom.js";
@@ -182,7 +182,7 @@ function setError(err) {
   ui.error.replaceChildren();
   if (!err) return;
   ui.error.append(h("span", {}, err.message));
-  if (["no_key", "auth", "model", "permission"].includes(err.code)) {
+  if (SETTINGS_ERRORS.has(err.code)) {
     ui.error.append(
       " ",
       h("button", { class: "qa-link", type: "button", onclick: () => chrome.runtime.openOptionsPage() }, "Open settings"),
@@ -627,7 +627,7 @@ async function onDocumentLoaded() {
   const settings = await getSettings();
   const info = modelInfo(settings.model);
   const tokens = Math.ceil(chars / 3.5);
-  const cost = info.input ? ` · ~$${((tokens / 1e6) * info.input).toFixed(2)} input per ask` : "";
+  const cost = info.input && settings.backend !== "claude-code" ? ` · ~$${((tokens / 1e6) * info.input).toFixed(2)} input per ask` : "";
   setStatus(
     `${pdf.numPages} pages · ~${Math.round(tokens / 1000)}k tokens${cost}` + (restored ? " · restored from cache" : ""),
   );
@@ -637,7 +637,7 @@ async function onDocumentLoaded() {
       message: `This PDF has ~${Math.round(tokens / 1000)}k tokens of text, more than ${settings.model} can read at once.`,
     });
   }
-  if (!settings.apiKey) {
+  if (!settings.apiKey && settings.backend !== "claude-code") {
     setError({ code: "no_key", message: "Add your Anthropic API key to start asking questions." });
   }
   setImplementDocument(state.doc);
@@ -904,7 +904,7 @@ function download(blob, suffix) {
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
-  if (changes.apiKey?.newValue && state.error?.code === "no_key") setError(null);
+  if ((changes.apiKey?.newValue || changes.backend?.newValue === "claude-code") && state.error?.code === "no_key") setError(null);
   if (changes.openMode) renderViewerNote(changes.openMode.newValue);
 });
 

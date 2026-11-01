@@ -44,7 +44,7 @@ READ PAPERS FASTER
 • Works with local files too (enable "Allow access to file URLs").
 
 YOUR KEY, YOUR DATA
-• Bring your own Anthropic API key. It is stored only in your browser.
+• Bring your own Anthropic API key. It is stored only in your browser. Or, on macOS and Linux, use your own Claude Code installation instead, with a small helper from the project's repository; the Implement tab then starts Claude Code on the prompt it wrote.
 • The extension has no server and no analytics. The paper's text and your questions go only to Anthropic's API, and only when you press "Find answers". Pointing at or clicking a citation, or clicking the paper info button, looks up just that paper's reference, title or ID in public scholarly databases (Semantic Scholar, Crossref, OpenAlex, arXiv).
 • Choose the model (Claude Opus, Sonnet, Haiku or Fable) and how much effort it spends.
 
@@ -88,13 +88,14 @@ Paper Q&A is an independent project and is not affiliated with or endorsed by An
 | `webRequest` | Observes (does not block or modify) the `Content-Type` of top-level page loads to recognize PDFs whose URL doesn't end in ".pdf", such as arxiv.org/pdf/… links, and, when the user made Paper Q&A the default PDF viewer, to open them in it right away. |
 | `notifications` | Fallback offer to open a PDF when a banner can't be shown in the tab. |
 | `contextMenus` | Adds an "Open PDF in Paper Q&A" item for links. |
+| `nativeMessaging` | Optional Claude Code backend: when the user turns it on and installs the open-source helper from the project's repository, requests are sent to the user's own Claude Code installation on their computer instead of the Anthropic API, and the Implement tab can start Claude Code on the prompt it wrote. Only the helper named `com.paperqa.claude_code` is contacted, and only when the user has chosen this backend. |
 | Host permission `<all_urls>` | Needed to download the PDF the user chooses to open, from whatever site it is on (with the user's cookies, for papers behind a login), to detect PDF tabs on any site, and to call `api.anthropic.com` and, when the user points at or clicks a citation or clicks the paper info button, the public scholarly APIs `api.semanticscholar.org`, `api.crossref.org`, `api.openalex.org` and `export.arxiv.org`. The extension reads no other page content. |
 
 **Remote code:** No, I am not using remote code. All JavaScript, including pdf.js and pdf-lib, is bundled in the package. Scripts embedded in PDFs are never run.
 
 **Data usage.** Tick these:
 
-- **Website content.** The text of the PDF the user opens is sent to Anthropic's API when the user asks a question or asks for an implementation prompt. When the user points at or clicks a citation, or clicks the paper info button, that paper's bibliography entry, title or identifier is sent to public scholarly APIs (Semantic Scholar, Crossref, OpenAlex, arXiv) to look it up.
+- **Website content.** The text of the PDF the user opens is sent to Anthropic's API when the user asks a question or asks for an implementation prompt (or, if the user chose the Claude Code backend, to their own Claude Code installation, which sends it to Anthropic). When the user points at or clicks a citation, or clicks the paper info button, that paper's bibliography entry, title or identifier is sent to public scholarly APIs (Semantic Scholar, Crossref, OpenAlex, arXiv) to look it up.
 - **Authentication information.** The user's own Anthropic API key is stored locally and sent only to Anthropic's API. An optional Semantic Scholar API key is stored locally and sent only to the Semantic Scholar API.
 
 Then certify all three statements:
