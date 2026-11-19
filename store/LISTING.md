@@ -38,7 +38,7 @@ BUILT FOR REAL PAPERS
 • Answers are cached per file, so reopening a paper brings its highlights back instantly at no extra cost.
 
 READ PAPERS FASTER
-• Click a citation to preview the cited paper: title, authors, venue, citation count, a short summary and the abstract, with links to Google Scholar, arXiv and the PDF. Open the cited paper in Paper Q&A with one click.
+• Click a citation to preview the cited paper: title, authors, venue, citation count, a short summary and the abstract, with links to Google Scholar, arXiv and the PDF. For grouped citations like [2], [50] or [23]–[25], step through each cited paper with the arrows. Open the cited paper in Paper Q&A with one click.
 • The paper info button shows the same for the paper you're reading, with its BibTeX.
 • Make Paper Q&A your default PDF viewer: PDFs open in it straight away, and the address bar still shows the PDF's own URL. Switching back to Chrome's viewer takes one click.
 • Works with local files too (enable "Allow access to file URLs").

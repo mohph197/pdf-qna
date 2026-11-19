@@ -473,6 +473,54 @@ try {
     await page.evaluate(() => (PDFViewerApplication.page = 1));
   });
 
+  await step("a citation cited with others steps through the group", async () => {
+    // The second "[41]" on page 1 is in "[41, 44]".
+    const link = '.page[data-page-number="1"] .annotationLayer [data-internal-link] a[href*="cite.Simonyan2015"]';
+    await page.waitForFunction((sel) => document.querySelectorAll(sel).length >= 2, { timeout: 10000 }, link);
+    // Its centre, once it has stayed in the same place on screen for a poll:
+    // the last step's jump to the bibliography can still be settling.
+    const at = await page.waitForFunction(
+      (sel) => {
+        const a = document.querySelectorAll(sel)[1];
+        const r = a.getBoundingClientRect();
+        const point = { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+        const last = window.__citeAt;
+        window.__citeAt = point;
+        if (!(r.width > 0 && document.elementFromPoint(point.x, point.y) === a)) {
+          a.scrollIntoView({ block: "center" });
+          return null;
+        }
+        return last?.x === point.x && last?.y === point.y && point;
+      },
+      { timeout: 10000, polling: 250 },
+      link,
+    );
+    const { x, y } = await at.jsonValue();
+    const before = await page.evaluate(() => PDFViewerApplication.page);
+    await page.mouse.click(x, y);
+    await page.waitForSelector(".qa-pop .qa-paper-title", { timeout: 10000 });
+    const nav = () =>
+      page.$eval(".qa-pop", (e) => ({
+        count: e.querySelector(".qa-pop-count").textContent,
+        prev: e.querySelector(".qa-pop-step").disabled,
+        next: e.querySelector(".qa-pop-step:last-child").disabled,
+      }));
+    assert.deepEqual(await nav(), { count: "[41] · 1 of 2", prev: true, next: false });
+    assert.equal(await page.$eval(".qa-pop .qa-paper-title", (e) => e.textContent), VGG);
+    // The arrow keys step through the group without turning the page.
+    await page.keyboard.press("ArrowRight");
+    assert.deepEqual(await nav(), { count: "[44] · 2 of 2", prev: false, next: true });
+    await page.waitForFunction(() => /Going deeper with convolutions/i.test(document.querySelector(".qa-pop").textContent), {
+      timeout: 10000,
+    });
+    await page.$eval(".qa-pop-step", (b) => b.click());
+    assert.equal((await nav()).count, "[41] · 1 of 2");
+    await page.waitForSelector(".qa-pop .qa-paper-title", { timeout: 10000 });
+    assert.equal(await page.evaluate(() => PDFViewerApplication.page), before, "stepping turned the page");
+    await page.keyboard.press("Escape");
+    assert.equal(await page.$(".qa-pop"), null);
+  });
+
   await step("questions are answered and highlighted", async () => {
     await page.type(".qa-input", QUESTIONS.join("\n"));
     if (SHOTS) await page.screenshot({ path: join(SHOTS, "screenshot-1-ask.png") });
@@ -728,22 +776,31 @@ try {
     await page.waitForFunction(() => /12 pages/.test(document.querySelector(".qa-status")?.textContent), { timeout: 30000 });
     // The centre of "41" in the first "[41]" in the text layer, once the
     // page has rendered and the point hits that text.
-    const citeAt = () => page.waitForFunction(
-      () => {
+    const citeAt = (needle = "[41]", from = 1) => page.waitForFunction(
+      (needle, from) => {
         for (const span of document.querySelectorAll(".textLayer span")) {
-          const i = span.textContent.indexOf("[41]");
+          const i = span.textContent.indexOf(needle);
           if (i < 0 || !span.firstChild) continue;
-          span.scrollIntoView({ block: "center" });
           const range = document.createRange();
-          range.setStart(span.firstChild, i + 1);
-          range.setEnd(span.firstChild, i + 3);
+          range.setStart(span.firstChild, i + from);
+          range.setEnd(span.firstChild, i + from + 2);
           const r = range.getBoundingClientRect();
           const point = { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-          return document.elementFromPoint(point.x, point.y) === span && point;
+          // Only once it has stayed put for a poll: a jump to the
+          // bibliography can still be settling.
+          const last = window.__citeAt;
+          window.__citeAt = point;
+          if (document.elementFromPoint(point.x, point.y) !== span) {
+            span.scrollIntoView({ block: "center" });
+            return null;
+          }
+          return last?.x === point.x && last?.y === point.y && point;
         }
         return null;
       },
       { timeout: 10000, polling: 250 },
+      needle,
+      from,
     );
     const { x, y } = await (await citeAt()).jsonValue();
     await page.mouse.move(x, y);
@@ -759,6 +816,21 @@ try {
     // Plain text elsewhere isn't a citation.
     await page.mouse.move(5, 5);
     assert.equal(await page.$(".textLayer span.qa-cite-text"), null);
+
+    // "44" in "[41, 44]" opens that group at 44.
+    await page.evaluate(() => (PDFViewerApplication.page = 1));
+    const at44 = await (await citeAt("[41, 44]", 5)).jsonValue();
+    await page.mouse.move(at44.x, at44.y);
+    await page.waitForSelector(".textLayer span.qa-cite-text", { timeout: 5000 });
+    await citeAt("[41, 44]", 5);
+    await page.mouse.click(at44.x, at44.y);
+    await page.waitForSelector(".qa-pop .qa-pop-count", { timeout: 10000 });
+    assert.equal(await page.$eval(".qa-pop-count", (e) => e.textContent), "[44] · 2 of 2");
+    await page.keyboard.press("ArrowLeft");
+    assert.equal(await page.$eval(".qa-pop-count", (e) => e.textContent), "[41] · 1 of 2");
+    await page.waitForSelector(".qa-pop .qa-paper-title", { timeout: 10000 });
+    assert.equal(await page.$eval(".qa-pop .qa-paper-title", (e) => e.textContent), VGG);
+    await page.keyboard.press("Escape");
   });
 
   await step("local file:// PDFs load (with file access allowed)", async () => {

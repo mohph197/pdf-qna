@@ -4,9 +4,11 @@
 // worker (Semantic Scholar, Crossref, OpenAlex, arXiv). Hovering a citation
 // starts its lookup, so the card is usually ready by the time it's clicked.
 // In PDFs whose citations aren't links, plain-text numbered citations ("[12]")
-// work the same way.
+// work the same way. For citations cited together ("[2], [50]", "[23]–[25]",
+// "(He et al., 2016; Ma, 2017)") the card steps through the whole group.
 
 import {
+  citationGroups,
   findReferencesStart,
   isCiteDestName,
   isStructuralDestName,
@@ -26,7 +28,7 @@ let app;
 let getDoc; // () => state.doc or null
 let getSource; // () => the PDF's original URL or null
 let enabled = true;
-let pop = null; // { el, anchor, kind }
+let pop = null; // { el, anchorEl, kind, step? }
 const cache = new Map(); // JSON query -> Promise<paper|null>
 const citations = new Map(); // JSON destination -> Promise<{ ref, query } | null>
 const CITE_LINK = ".annotationLayer [data-internal-link] a";
@@ -47,6 +49,18 @@ export function initPapers(options) {
     if (pop && !pop.el.contains(e.target) && !pop.anchorEl?.contains(e.target)) closePop();
   });
   document.addEventListener("keydown", (e) => e.key === "Escape" && closePop());
+  // Capture phase, so pdf.js doesn't also turn the page.
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      const d = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
+      if (!d || !pop?.step || e.altKey || e.ctrlKey || e.metaKey || e.target.closest?.("input, textarea, select, [contenteditable]")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      pop.step(d);
+    },
+    true,
+  );
   app.eventBus.on("documentloaded", () => {
     closePop();
     citations.clear();
@@ -102,12 +116,20 @@ function onLinkClick(e) {
   if (!link) {
     // Plain text has no default action to replace; a drag selects text.
     const cite = getSelection().isCollapsed && textCitation(e);
-    if (cite) showCitation(cite.dest, cite.anchor).catch(() => {});
+    if (cite) {
+      const members = cite.group.map((n) => ({ dest: { numbered: n }, label: String(n) }));
+      showCitation(members, cite.index, cite.anchor).catch(() => {});
+    }
     return;
   }
   e.preventDefault();
   e.stopImmediatePropagation();
-  showCitation(link.dest, link.a).catch(() => app.pdfLinkService.goToDestination(link.dest));
+  let group = null;
+  try {
+    group = linkGroup(link);
+  } catch {} // without its group, the card still shows this citation
+  const members = group?.members ?? [{ dest: link.dest }];
+  showCitation(members, group?.index ?? 0, link.a).catch(() => app.pdfLinkService.goToDestination(link.dest));
 }
 
 let hoverTimer = null;
@@ -124,18 +146,103 @@ function onLinkHover(e) {
   }, 150);
 }
 
-async function showCitation(dest, linkEl) {
+// Show the card for members[index], a citation in a group of citations
+// ([{ dest, label? }]) that the card can step through.
+async function showCitation(members, index, linkEl) {
+  const { dest } = members[index];
   const cite = await resolveCitation(dest);
   // Other links (to a section, figure or footnote) keep their usual behavior.
   if (!cite) {
     app.pdfLinkService.goToDestination(dest);
     return;
   }
-  const goToReference = () => {
-    closePop();
-    app.pdfLinkService.goToDestination(cite.goTo ?? dest);
+  // Group members that lead to a bibliography entry, each entry once.
+  const resolved = await Promise.all(members.map((m, i) => (i === index ? cite : resolveCitation(m.dest).catch(() => null))));
+  const entries = [];
+  members.forEach((m, i) => {
+    const c = resolved[i];
+    if (c && !entries.some((e) => e.cite.ref.text === c.ref.text)) entries.push({ ...m, cite: c });
+  });
+  const at = entries.findIndex((e) => e.cite.ref.text === cite.ref.text);
+  openPop(linkEl, "cite", () => citationCard(entries, at));
+}
+
+function citationCard(entries, index) {
+  const card = (entry) =>
+    paperCard(entry.cite.query, {
+      reference: entry.cite.ref.text,
+      goToReference: () => {
+        closePop();
+        app.pdfLinkService.goToDestination(entry.cite.goTo ?? entry.dest);
+      },
+    });
+  if (entries.length < 2) return card(entries[0]);
+
+  const body = h("div", {});
+  const counter = h("span", { class: "qa-pop-count", "aria-live": "polite" });
+  const stepButton = (d, text, title) =>
+    h("button", { class: "qa-pop-step", type: "button", title, "aria-label": title, onclick: () => show(index + d) }, text);
+  const prev = stepButton(-1, "‹", "Previous cited paper (←)");
+  const next = stepButton(1, "›", "Next cited paper (→)");
+  const show = (i) => {
+    if (i < 0 || i >= entries.length) return;
+    index = i;
+    const { label } = entries[i];
+    const name = !label ? "" : /^\d+$/.test(label) ? `[${label}]` : label;
+    counter.textContent = `${name ? `${name} · ` : ""}${i + 1} of ${entries.length}`;
+    prev.disabled = i === 0;
+    next.disabled = i === entries.length - 1;
+    body.replaceChildren(card(entries[i]));
+    // The neighbours are likely next.
+    for (const e of [entries[i - 1], entries[i + 1]]) e && lookup(e.cite.query).catch(() => {});
   };
-  openPop(linkEl, "cite", () => paperCard(cite.query, { reference: cite.ref.text, goToReference }));
+  pop.step = (d) => show(index + d);
+  show(index);
+  return h("div", {}, h("div", { class: "qa-pop-nav" }, prev, counter, next), body);
+}
+
+// The group of citation links cited together with `link` ("[2], [50]",
+// "[23]–[25]"), as { members: [{ dest, label }], index }, or null. Works from
+// the text layer: the text inside each link and the text between links.
+function linkGroup(link) {
+  const pageDiv = link.a.closest(".page");
+  const spans = [...(pageDiv?.querySelectorAll(TEXT_SPAN) ?? [])];
+  if (!spans.length) return null;
+  const links = [...pageDiv.querySelectorAll(CITE_LINK)]
+    .map((a) => (a === link.a ? link : citationDest(a)))
+    .filter(Boolean)
+    .map((l) => ({ ...l, rect: l.a.getBoundingClientRect() }));
+  const self = links.findIndex((l) => l.a === link.a);
+  const overlaps = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+  const inside = (r, x, y) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  const spanRects = spans.map((s) => s.getBoundingClientRect());
+  const near = spanRects.flatMap((r, i) => (overlaps(r, links[self].rect) ? [i] : []));
+  if (!near.length) return null;
+
+  // The text a few lines around the link, in reading order, split into the
+  // characters inside each link and the rest.
+  const segments = [];
+  for (let i = Math.max(0, near[0] - 30); i < Math.min(spans.length, near.at(-1) + 31); i++) {
+    const text = spans[i].textContent;
+    const eol = spans[i].nextSibling?.nodeName === "BR" ? " " : "";
+    const candidates = links.filter((l) => overlaps(l.rect, spanRects[i]));
+    if (!candidates.length) {
+      segments.push({ text: text + eol });
+      continue;
+    }
+    for (let c = 0; c < text.length; c++) {
+      const r = textRange(spans[i], c, c + 1).getBoundingClientRect();
+      const hit = candidates.find((l) => inside(l.rect, r.left + r.width / 2, r.top + r.height / 2));
+      segments.push({ text: text[c], key: hit ? links.indexOf(hit) : undefined });
+    }
+    if (eol) segments.push({ text: eol });
+  }
+  const group = citationGroups(segments).find((g) => g.some((m) => m.key === self));
+  if (!group || group.length < 2) return null;
+  return {
+    members: group.map((m) => (m.key == null ? { dest: { numbered: m.n }, label: m.label } : { dest: links[m.key].dest, label: m.label })),
+    index: group.findIndex((m) => m.key === self),
+  };
 }
 
 function resolveCitation(dest) {
@@ -243,7 +350,7 @@ function textCitation(e) {
 
   const range = textRange(span, cite.start, cite.end);
   const rect = range.getBoundingClientRect();
-  return { dest: { numbered: cite.n }, span, anchor: { getBoundingClientRect: () => rect, contains: (node) => span.contains(node) } };
+  return { dest: { numbered: cite.n }, group: cite.group, index: cite.index, span, anchor: { getBoundingClientRect: () => rect, contains: (node) => span.contains(node) } };
 }
 
 // A range over characters start..end of an element's text, which highlights
