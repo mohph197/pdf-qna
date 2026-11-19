@@ -2,6 +2,14 @@
 
 All notable changes to Paper Q&A are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.6.0](https://github.com/mohph197/pdf-qna/compare/v1.5.0...v1.6.0) (2026-11-19)
+
+
+### Features
+
+* **citations:** step through grouped citations like [2], [50] and expand [23]–[25] ranges ([#22](https://github.com/mohph197/pdf-qna/issues/22)) ([df889a0](https://github.com/mohph197/pdf-qna/commit/df889a071ba83058e549174fc6a333cbf76919a6))
+* **sidebar:** scroll a newly answered question into view ([#24](https://github.com/mohph197/pdf-qna/issues/24)) ([f933823](https://github.com/mohph197/pdf-qna/commit/f933823716a1afd7aef42d2fa82bfd49a10eb709))
+
 ## [1.5.0](https://github.com/mohph197/pdf-qna/compare/v1.4.0...v1.5.0) (2026-11-01)
 
 
