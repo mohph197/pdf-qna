@@ -299,7 +299,7 @@ function render() {
       }
       return h(
         "section",
-        { class: "qa-card", style: { "--qa-color": q.color } },
+        { class: "qa-card", dataset: { qid: q.id }, style: { "--qa-color": q.color } },
         h(
           "div",
           { class: "qa-q" },
@@ -694,6 +694,7 @@ function ask(all) {
       save();
       refreshHighlights();
       done();
+      revealCard(targets[0].id);
       // Bring the first new highlight into view.
       const first = targets.find((q) => state.matches[q.id]?.some((m) => m.segments.length));
       if (first) jumpTo(first.id, state.matches[first.id].findIndex((m) => m.segments.length));
@@ -814,6 +815,19 @@ function paintSpan(span, str, list) {
     parts.push(el);
   }
   span.replaceChildren(...parts);
+}
+
+// Scroll the sidebar so a question's card is visible, unless it already is.
+// A card taller than the list is aligned to the top so its question shows.
+function revealCard(qid) {
+  const card = [...ui.list.querySelectorAll(".qa-card")].find((c) => c.dataset.qid === qid);
+  if (!card) return;
+  const list = ui.list.getBoundingClientRect();
+  const r = card.getBoundingClientRect();
+  if (r.top >= list.top && r.bottom <= list.bottom) return;
+  const top = r.top - list.top + ui.list.scrollTop - (parseFloat(getComputedStyle(ui.list).paddingTop) || 0);
+  const target = r.height > ui.list.clientHeight || r.top < list.top ? top : top + r.height - ui.list.clientHeight + 20;
+  ui.list.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
 }
 
 async function jumpTo(qid, qi) {
