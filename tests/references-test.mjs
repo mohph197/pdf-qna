@@ -12,6 +12,7 @@ import { basename } from "node:path";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { lookupPaper } from "../background/scholar.js";
 import {
+  citationGroups,
   findReferencesStart,
   idsFromUrl,
   isCiteDestName,
@@ -136,6 +137,42 @@ await check("finds plain-text numbered citations and their entries", () => {
     y: 695,
   });
   assert.equal(numberedReference(pages, 3, refsStart), null);
+});
+
+await check("groups plain-text numbered citations and fills in ranges", () => {
+  const items = [item("as in [23]–[25] and [2],[50], also [3–6], [4]; [7, 9] or [1-99] [8].", 57, 700)];
+  const groups = numberedCitations(items).map(({ n, group, index }) => [n, group.join(" "), index]);
+  assert.deepEqual(groups, [
+    [23, "23 24 25", 0],
+    [25, "23 24 25", 2],
+    [2, "2 50", 0],
+    [50, "2 50", 1],
+    [3, "3 4 5 6 7 9", 0],
+    [6, "3 4 5 6 7 9", 3],
+    [4, "3 4 5 6 7 9", 1], // a repeated number is shown once
+    [7, "3 4 5 6 7 9", 4],
+    [9, "3 4 5 6 7 9", 5],
+    [1, "1 99", 0], // too long to be a range
+    [99, "1 99", 1],
+    [8, "8", 0],
+  ]);
+});
+
+await check("groups citation links cited together", () => {
+  // "[23]–[25] and [2],[50]. Then (He et al., 2016; Ma, 2017) and [41]" with
+  // links a, b, …; "[41]" is split across two links to the same place.
+  const seg = (text, key) => ({ text, key });
+  const groups = citationGroups([
+    seg("as in ["), seg("23", "a"), seg("]", "a"), seg("–["), seg("25", "b"), seg("] and ["), seg("2", "c"), seg("],["), seg("50", "d"),
+    seg("]. Then ("), seg("He et al., ", "e"), seg("2016", "e"), seg("; "), seg("Ma, 2017", "f"), seg(") and ["),
+    seg("4", "g"), seg("1", "g"), seg("]-["), seg("4", "g"), seg("1", "g"), seg("]"),
+  ]);
+  assert.deepEqual(groups, [
+    [{ key: "a", label: "23" }, { n: 24, label: "24" }, { key: "b", label: "25" }],
+    [{ key: "c", label: "2" }, { key: "d", label: "50" }],
+    [{ key: "e", label: "He et al., 2016" }, { key: "f", label: "Ma, 2017" }],
+    [{ key: "g", label: "41" }],
+  ]);
 });
 
 // --- Lookups, with every API faked -------------------------------------------

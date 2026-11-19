@@ -637,6 +637,44 @@ a.qa-web-source {
 .qa-pop .qa-pop-source {
   margin: 4px 0 0;
 }
+/* Stepping through citations cited together ("[2], [50]", "[23]–[25]"). */
+.qa-pop-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--qa-border);
+}
+.qa-pop-count {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--qa-muted);
+  font-size: 12px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qa-pop-step {
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--qa-border);
+  border-radius: 6px;
+  background: var(--qa-bg);
+  color: var(--qa-fg);
+  font: 16px/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+.qa-pop-step:hover:not(:disabled) {
+  border-color: var(--qa-accent);
+  color: var(--qa-accent);
+}
+.qa-pop-step:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 
 @media (max-width: 760px) {
   :root {
