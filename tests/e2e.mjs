@@ -781,13 +781,20 @@ try {
         for (const span of document.querySelectorAll(".textLayer span")) {
           const i = span.textContent.indexOf(needle);
           if (i < 0 || !span.firstChild) continue;
-          span.scrollIntoView({ block: "center" });
           const range = document.createRange();
           range.setStart(span.firstChild, i + from);
           range.setEnd(span.firstChild, i + from + 2);
           const r = range.getBoundingClientRect();
           const point = { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-          return document.elementFromPoint(point.x, point.y) === span && point;
+          // Only once it has stayed put for a poll: a jump to the
+          // bibliography can still be settling.
+          const last = window.__citeAt;
+          window.__citeAt = point;
+          if (document.elementFromPoint(point.x, point.y) !== span) {
+            span.scrollIntoView({ block: "center" });
+            return null;
+          }
+          return last?.x === point.x && last?.y === point.y && point;
         }
         return null;
       },
