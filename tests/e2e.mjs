@@ -646,8 +646,19 @@ try {
     await page.click(".qa-compose .qa-btn:not(.qa-primary)");
     await page.click(".qa-options label:nth-child(2) input");
     assert.equal(await page.$$eval(".qa-card", (e) => e.length), 7, "a multi-line free-form request must be one question");
+    await page.$eval(".qa-list", (e) => (e.scrollTop = 0));
     await page.click(".qa-primary");
     await page.waitForFunction(() => document.querySelector(".qa-freeform"), { timeout: 30000 });
+    // The sidebar scrolls the new answer into view.
+    await page.waitForFunction(
+      () => {
+        const list = document.querySelector(".qa-list").getBoundingClientRect();
+        const card = [...document.querySelectorAll(".qa-card")].at(-1).getBoundingClientRect();
+        return card.top >= list.top - 1 && card.bottom <= list.bottom + 1;
+      },
+      { timeout: 5000 },
+    );
+    assert.ok(await page.$eval(".qa-list", (e) => e.scrollTop > 0), "the list should have scrolled to the answer");
     const call = apiCalls.at(-1);
     assert.equal(call.body.max_tokens, 32000);
     assert.match(call.body.messages[0].content[1].text, /^Questions:\n1\. \[free-form\] List the datasets used\.\nFormat:/);
